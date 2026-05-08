@@ -497,6 +497,65 @@ function bestReliefName(options: BullpenOption[]): string | null {
   return ranked[0]?.name ?? null;
 }
 
+function auditCount(summary: PitchingAuditSummaryPayload | null, key: string): number {
+  const counts = summary?.window_filtered_counts ?? {};
+  const value = counts[`${key}_filtered`] ?? counts[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function profilePerGame(profile: PitcherProfile): number | null {
+  if (!profile.appearances) return null;
+  return (profile.projectedRunsSaved ?? 0) / profile.appearances;
+}
+
+function rankProfiles(profiles: PitcherProfile[], score: (profile: PitcherProfile) => number | null): PitcherProfile[] {
+  return [...profiles].sort((a, b) => (score(b) ?? -Infinity) - (score(a) ?? -Infinity));
+}
+
+function rawNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function rawRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function overviewAuditWindows(summary: PitchingAuditSummaryPayload | null): PitchingAuditWindow[] {
+  if (!summary) return [];
+  return [
+    ...(summary.missed_hook_windows ?? []),
+    ...(summary.delayed_change_windows ?? []),
+    ...(summary.high_leverage_holdouts ?? []),
+    ...(summary.justified_stay_windows ?? []),
+  ];
+}
+
+function auditWindowMatrixKey(row: PitchingAuditWindow): "standard" | "tandem" | "push" | "workload" {
+  const starter = rawRecord(row.starter);
+  const candidate = rawRecord(row.top_candidate);
+  const degradation = rawNumber(starter.degradation_score);
+  const starterAbove = degradation == null ? false : degradation < 1.15;
+  const optionScore = rawNumber(candidate.net_option_score);
+  const matchupFit = rawNumber(candidate.direct_matchup_fit);
+  const bullpenAbove = Math.max(optionScore ?? -Infinity, matchupFit ?? -Infinity) >= 0.45;
+  if (bullpenAbove && starterAbove) return "standard";
+  if (bullpenAbove && !starterAbove) return "tandem";
+  if (!bullpenAbove && starterAbove) return "push";
+  return "workload";
+}
+
+function seasonMatrixCounts(summary: PitchingAuditSummaryPayload | null): Record<"standard" | "tandem" | "push" | "workload", number> {
+  return overviewAuditWindows(summary).reduce(
+    (counts, row) => {
+      counts[auditWindowMatrixKey(row)] += 1;
+      return counts;
+    },
+    { standard: 0, tandem: 0, push: 0, workload: 0 },
+  );
+}
+
 function OpportunityCard({ decision, reliefName }: { decision: PitcherDecision; reliefName: string | null }) {
   const confidence = decision.trajectoryConfidence;
   const starterRisk = starterRiskLabel(decision);
@@ -641,16 +700,74 @@ function OverviewModule({
   decisions,
   bullpenOptions,
   audits,
+  profilesPayload,
+  auditSummary,
+  onModuleChange,
 }: {
   team: Team;
   payload: RunSavingBoardPayload;
   decisions: PitcherDecision[];
   bullpenOptions: BullpenOption[];
   audits: AuditRow[];
+  profilesPayload: PitcherProfilesPayload | null;
+  auditSummary: PitchingAuditSummaryPayload | null;
+  onModuleChange: (module: ActiveModule) => void;
 }) {
-  const projected = sum(decisions.map((decision) => decision.projectedRunsSaved));
+  const snapshotProjected = sum(decisions.map((decision) => decision.projectedRunsSaved));
+  const profiles = profilesPayload?.profiles ?? [];
+  const seasonProjected = sum(profiles.map((profile) => profile.projectedRunsSaved));
   const avgCliff = average(decisions.map((decision) => decision.cliffProbability));
   const bestRelief = bestReliefName(bullpenOptions);
+  const bestOption = bullpenOptions.length > 0 ? [...bullpenOptions].sort((a, b) => (b.netOptionScore ?? -Infinity) - (a.netOptionScore ?? -Infinity))[0] : null;
+  const missedHooks = auditCount(auditSummary, "missed_hook_windows");
+  const delayedChanges = auditCount(auditSummary, "delayed_change_windows");
+  const justifiedStays = auditCount(auditSummary, "justified_stay_windows");
+  const highLeverageHolds = auditCount(auditSummary, "high_leverage_holdouts");
+  const actionableCases = missedHooks + delayedChanges;
+  const topOpportunity = rankProfiles(profiles, (profile) => profile.projectedRunsSaved)[0] ?? null;
+  const topPerGame = rankProfiles(profiles, profilePerGame)[0] ?? null;
+  const repeatPull = rankProfiles(profiles, (profile) => profile.pullNowGames)[0] ?? null;
+  const opportunityShare =
+    topOpportunity?.projectedRunsSaved != null && seasonProjected > 0
+      ? topOpportunity.projectedRunsSaved / seasonProjected
+      : null;
+  const seasonMatrix = seasonMatrixCounts(auditSummary);
+  const matrixBuckets = {
+    standard: decisions.filter((decision) => matrixKey(decision, bestOption) === "standard"),
+    tandem: decisions.filter((decision) => matrixKey(decision, bestOption) === "tandem"),
+    push: decisions.filter((decision) => matrixKey(decision, bestOption) === "push"),
+    workload: decisions.filter((decision) => matrixKey(decision, bestOption) === "workload"),
+  };
+  const clubInsights = [
+    {
+      label: "Largest Opportunity Concentration",
+      title: topOpportunity ? topOpportunity.pitcher : "No pitcher concentration yet",
+      detail: topOpportunity
+        ? `${formatRuns(topOpportunity.projectedRunsSaved)} opportunity runs across ${topOpportunity.appearances} appearances. ${opportunityShare == null ? "" : `${formatPercent(opportunityShare)} of the club opportunity pool.`}`
+        : "Pitcher profiles will populate after season replay artifacts are available.",
+      action: "Use the pitcher profile game log to separate repeat late-start decay from one-off game context.",
+    },
+    {
+      label: "Most Repeat Action Signals",
+      title: repeatPull ? repeatPull.pitcher : "No repeated Pull Now profile",
+      detail: repeatPull
+        ? `${repeatPull.pullNowGames} Pull Now games and ${repeatPull.prepOrWatchGames} prep/watch games.`
+        : "No pitcher has repeated action signals in the current profile set.",
+      action: "Review whether these are usage-pattern issues, matchup issues, or normal starter workload tradeoffs.",
+    },
+    {
+      label: "Audit Priority",
+      title: `${actionableCases} actionable timing cases`,
+      detail: `${missedHooks} missed hooks, ${delayedChanges} delayed changes, ${justifiedStays} justified stays, ${highLeverageHolds} high-leverage holdouts.`,
+      action: "Start with missed hooks and delayed changes, then compare them against bullpen availability at the time.",
+    },
+    {
+      label: "Strategic Edge Cell",
+      title: `${seasonMatrix.tandem} tandem-mandatory candidates`,
+      detail: "Season audit windows where starter degradation appears below-average while the recorded relief alternative clears the option-score threshold.",
+      action: "These are the best drill-down cases for the deployment matrix and counterfactual review.",
+    },
+  ];
 
   return (
     <section className="module-surface">
@@ -659,16 +776,92 @@ function OverviewModule({
           <p className="eyebrow">Club Overview</p>
           <h2>{team.club} pitcher intelligence board.</h2>
           <p className="lede">
-            A club-scoped view of today&apos;s starter decisions, relief alternatives, season evidence, and run-prevention opportunities.
+            A club-scoped view of season-to-date allocation evidence, current priority windows, and the strategic edge cases where starter decay meets a better relief alternative.
           </p>
         </div>
       </div>
 
       <div className="stat-grid">
-        <StatCard label="Projected Runs Saved" value={formatRuns(projected)} detail="Sum of calibrated opportunities on this club page." />
-        <StatCard label="Open Decisions" value={String(decisions.length)} detail="Starter and relief windows currently requiring evaluation." />
-        <StatCard label="Starter Cliff Risk" value={formatPercent(avgCliff)} detail="Average current cliff probability across visible pitcher windows." />
-        <StatCard label="Relief Alternatives" value={String(bullpenOptions.length)} detail={bestRelief ? `Top available option: ${bestRelief}.` : "No calibrated relief option currently available."} />
+        <StatCard label="Season Opportunity Runs" value={formatRuns(seasonProjected)} detail={`Club-level allocation opportunity across ${profilesPayload?.summary.gameCount ?? 0} covered games.`} />
+        <StatCard label="Actionable Audit Cases" value={String(actionableCases)} detail={`${missedHooks} missed hooks plus ${delayedChanges} delayed changes.`} />
+        <StatCard label="Pitchers Covered" value={String(profiles.length)} detail={`${profiles.reduce((total, profile) => total + profile.pitchWindows, 0)} pitch windows in season profiles.`} />
+        <StatCard label="Largest Concentration" value={topOpportunity?.pitcher ?? "—"} detail={topOpportunity ? `${formatRuns(topOpportunity.projectedRunsSaved)} opportunity runs.` : "No profile concentration yet."} />
+      </div>
+
+      <div className="club-insight-grid">
+        {clubInsights.map((insight) => (
+          <article className="club-insight-card" key={insight.label}>
+            <p className="eyebrow">{insight.label}</p>
+            <h3>{insight.title}</h3>
+            <p>{insight.detail}</p>
+            <strong>{insight.action}</strong>
+          </article>
+        ))}
+      </div>
+
+      <div className="overview-season-grid">
+        <article className="brief-card">
+          <p className="eyebrow">Season Rollup</p>
+          <h3>Club-level diagnosis.</h3>
+          <p>
+            This overview should be read as a season-to-date allocation briefing. It combines all available profile windows and audit windows for this club, then highlights where a staff process review can plausibly save runs.
+          </p>
+          <div className="brief-facts">
+            <span>Games: {profilesPayload?.summary.gameCount ?? "—"}</span>
+            <span>Pitcher profiles: {profiles.length}</span>
+            <span>Calibration windows: {profilesPayload?.summary.calibrationWindowCount ?? payload.summary.calibrationWindowCount ?? "—"}</span>
+            <span>Missed hooks: {missedHooks}</span>
+          </div>
+        </article>
+        <article className="brief-card">
+          <p className="eyebrow">Projected vs Raw Model</p>
+          <h3>Calibration layer.</h3>
+          <p>
+            Raw model is the direct starter-vs-reliever next-window run impact. Projected Runs Saved applies comparable historical calibration by status, degradation band, leverage band, inning band, and decision-delta band when enough samples exist. If no comparable bucket exists, projected equals model-implied.
+          </p>
+          <div className="brief-facts">
+            <span>Board snapshot runs: {formatRuns(snapshotProjected)}</span>
+            <span>Board rows: {decisions.length}</span>
+            <span>Top per-game: {topPerGame ? `${topPerGame.pitcher} ${formatRuns(profilePerGame(topPerGame))}` : "—"}</span>
+            <span>Source games: {payload.summary.sourceGameCount ?? "—"}</span>
+          </div>
+        </article>
+      </div>
+
+      <div className="overview-matrix-card">
+        <div className="section-heading section-heading--compact">
+          <div>
+            <p className="eyebrow eyebrow--navy">Deployment Matrix</p>
+            <h2>Where the strategic edge is concentrated.</h2>
+            <p className="lede">The top-right cell is the target: a hurting starter with an available relief upgrade. Counts below use the season audit summary; use the Matrix/Audit drill-down for case review.</p>
+          </div>
+          <div className="matrix-actions">
+            <button type="button" className="refresh-action secondary-action" onClick={() => onModuleChange("matrix")}>Open Matrix</button>
+            <button type="button" className="refresh-action secondary-action" onClick={() => onModuleChange("audit")}>Open Audit</button>
+          </div>
+        </div>
+        <div className="overview-matrix-grid">
+          <div className="overview-matrix-cell">
+            <span>Above-average pen · Above-average starter</span>
+            <strong>Standard usage</strong>
+            <em>{seasonMatrix.standard} season cases · {matrixBuckets.standard.length} priority</em>
+          </div>
+          <div className="overview-matrix-cell target">
+            <span>Above-average pen · Below-average starter</span>
+            <strong>Tandem mandatory</strong>
+            <em>{seasonMatrix.tandem} season cases · {matrixBuckets.tandem.length} priority</em>
+          </div>
+          <div className="overview-matrix-cell">
+            <span>Below-average pen · Above-average starter</span>
+            <strong>Push the starter</strong>
+            <em>{seasonMatrix.push} season cases · {matrixBuckets.push.length} priority</em>
+          </div>
+          <div className="overview-matrix-cell">
+            <span>Below-average pen · Below-average starter</span>
+            <strong>Workload management</strong>
+            <em>{seasonMatrix.workload} season cases · {matrixBuckets.workload.length} priority</em>
+          </div>
+        </div>
       </div>
 
       <div className="module-grid module-grid--wide-left">
@@ -676,7 +869,8 @@ function OverviewModule({
           <div className="section-heading section-heading--compact">
             <div>
               <p className="eyebrow eyebrow--navy">Primary Staff Moves</p>
-              <h2>Run prevention opportunities.</h2>
+              <h2>Priority opportunity snapshots.</h2>
+              <p className="lede">These are the top-ranked model windows from the board feed. They are designed for action review, not as the full season aggregate.</p>
             </div>
           </div>
           {decisions.length === 0 ? (
@@ -697,8 +891,7 @@ function OverviewModule({
           <p className="eyebrow">Front Office Brief</p>
           <h3>How to read the board.</h3>
           <p>
-            Projected Runs Saved converts pitch-level decay, current leverage, starter outlook, and available relief alternatives into a single
-            run-prevention value. The board is built for marginal allocation decisions, not wholesale staff changes.
+            Use this page as the club summary: season evidence at the top, deployment matrix in the middle, and current/high-priority snapshots below. Use pitcher profiles to diagnose who creates repeat opportunities.
           </p>
           <div className="brief-facts">
             <span>Snapshots: {payload.summary.sourceSnapshotCount ?? "—"}</span>
@@ -988,12 +1181,25 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
             <span className="eyebrow eyebrow--muted">{selected.team} · season to date</span>
             <h3>{selected.pitcher}</h3>
             <div className="profile-metrics profile-metrics--wide">
-              <span>Runs Saved <strong>{formatRuns(selected.projectedRunsSaved)}</strong></span>
+              <span>Opportunity Runs <strong>{formatRuns(selected.projectedRunsSaved)}</strong></span>
+              <span>Opportunity / Game <strong>{selected.appearances > 0 ? formatRuns((selected.projectedRunsSaved ?? 0) / selected.appearances) : AWAITING}</strong></span>
               <span>Appearances <strong>{selected.appearances}</strong></span>
               <span>Pitch Windows <strong>{selected.pitchWindows}</strong></span>
               <span>Pull Now Games <strong>{selected.pullNowGames}</strong></span>
               <span>Avg Degradation <strong>{formatScore(selected.avgDegradation, 2)}</strong></span>
-              <span>Max Degradation <strong>{formatScore(selected.maxDegradation, 2)}</strong></span>
+            </div>
+          </article>
+          <article className="profile-reading-card">
+            <p className="eyebrow">How to read this pitcher</p>
+            <h3>{selected.pitcher} is ranked by allocation opportunity, not realized performance.</h3>
+            <p>
+              Opportunity Runs sums the calibrated model windows attached to this pitcher&apos;s games. A high number means the model repeatedly found or projected meaningful run-prevention opportunities around this pitcher&apos;s usage. It should prompt drill-down into the game log and replay, not be read as official runs saved or a talent-only rating.
+            </p>
+            <div className="brief-facts">
+              <span>Peak degradation: {formatScore(selected.maxDegradation, 2)}</span>
+              <span>Prep/watch games: {selected.prepOrWatchGames}</span>
+              <span>Pull now games: {selected.pullNowGames}</span>
+              <span>Windows: {selected.pitchWindows}</span>
             </div>
           </article>
           <div className="game-log-table">
@@ -1002,7 +1208,7 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
               <span>Peak Signal</span>
               <span>Pitch Windows</span>
               <span>Max Deg</span>
-              <span>Runs Saved</span>
+              <span>Opportunity Runs</span>
               <span>Trajectory</span>
             </div>
             {selected.gameLog.map((game) => (
@@ -1740,7 +1946,18 @@ export default function App() {
     if (!payload) return null;
     switch (activeModule) {
       case "overview":
-        return <OverviewModule team={selectedTeam} payload={payload} decisions={decisions} bullpenOptions={bullpenOptions} audits={audits} />;
+        return (
+          <OverviewModule
+            team={selectedTeam}
+            payload={payload}
+            decisions={decisions}
+            bullpenOptions={bullpenOptions}
+            audits={audits}
+            profilesPayload={profilesPayload}
+            auditSummary={auditSummary}
+            onModuleChange={setActiveModule}
+          />
+        );
       case "replay":
         return <ReplayModule games={games} selectedGameId={selectedGameId} onGameChange={setSelectedGameId} replay={replay} recap={recap} team={selectedTeam} />;
       case "pitchers":

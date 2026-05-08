@@ -1041,6 +1041,107 @@ button {
   text-transform: uppercase;
 }
 
+.club-insight-grid,
+.overview-season-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 28px;
+}
+
+.club-insight-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.club-insight-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 245px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--red-500);
+  border-radius: 4px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+
+.club-insight-card h3 {
+  margin: 0;
+  color: var(--navy-900);
+  font-size: 25px;
+}
+
+.club-insight-card p {
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.club-insight-card strong {
+  align-self: end;
+  margin-top: 8px;
+  color: var(--red-700);
+  font-family: "Newsreader", serif;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.overview-matrix-card {
+  margin-bottom: 28px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+
+.matrix-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.overview-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.overview-matrix-cell {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--gold-100);
+  border-top: 6px solid var(--gold-500);
+  background: var(--gold-50);
+}
+
+.overview-matrix-cell.target {
+  border-color: #e6b9b4;
+  border-top-color: var(--red-500);
+  background: #fae8e6;
+}
+
+.overview-matrix-cell span,
+.overview-matrix-cell em {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.overview-matrix-cell strong {
+  color: var(--navy-900);
+  font-family: "Newsreader", serif;
+  font-size: 28px;
+}
+
 .metric-cell .value.text-value {
   font-size: 18px;
   line-height: 1.1;
@@ -1977,6 +2078,7 @@ button {
 }
 
 .pitcher-profile-hero,
+.profile-reading-card,
 .audit-counterfactual,
 .email-settings-card {
   padding: 24px;
@@ -1986,10 +2088,18 @@ button {
 }
 
 .pitcher-profile-hero h3,
+.profile-reading-card h3,
 .audit-hero h3,
 .email-settings-card h3 {
   margin: 8px 0 14px;
   font-size: 34px;
+}
+
+.profile-reading-card p {
+  color: var(--ink-soft);
+  font-family: "Newsreader", serif;
+  font-size: 17px;
+  line-height: 1.55;
 }
 
 .profile-metrics--wide {
@@ -2245,6 +2355,8 @@ button {
 @media (max-width: 1100px) {
   .team-command,
   .module-grid--wide-left,
+  .club-insight-grid,
+  .overview-season-grid,
   .replay-layout,
   .replay-curve-card,
   .mound-replay-grid,
@@ -2259,6 +2371,7 @@ button {
   }
 
   .stat-grid,
+  .overview-matrix-grid,
   .replay-metric-grid,
   .pitcher-profile-grid,
   .profile-metrics--wide,
@@ -2308,6 +2421,9 @@ button {
 
   .team-command,
   .stat-grid,
+  .club-insight-grid,
+  .overview-season-grid,
+  .overview-matrix-grid,
   .replay-headline,
   .replay-metric-grid,
   .pitcher-profile-grid,
