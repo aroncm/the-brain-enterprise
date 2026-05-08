@@ -3,6 +3,7 @@ import {
   ApiConfigurationError,
   fetchEnterpriseGames,
   fetchPitcherProfiles,
+  fetchPitchingAuditSummary,
   fetchPitchingRecap,
   fetchPitchingRecapSettings,
   fetchPitchingReplay,
@@ -19,6 +20,8 @@ import type {
   PitcherProfilesPayload,
   PitcherDecision,
   PitchingGameRecap,
+  PitchingAuditSummaryPayload,
+  PitchingAuditWindow,
   PitchingRecapSettings,
   PitchingReplayEntry,
   PitchingReplayResponse,
@@ -37,6 +40,57 @@ type Team = {
 };
 
 const AWAITING = "Awaiting calibrated value";
+
+const MLB_TEAM_IDS: Record<string, number> = {
+  ARI: 109,
+  ATL: 144,
+  BAL: 110,
+  BOS: 111,
+  CHC: 112,
+  CWS: 145,
+  CIN: 113,
+  CLE: 114,
+  COL: 115,
+  DET: 116,
+  HOU: 117,
+  KC: 118,
+  LAA: 108,
+  LAD: 119,
+  MIA: 146,
+  MIL: 158,
+  MIN: 142,
+  NYM: 121,
+  NYY: 147,
+  OAK: 133,
+  PHI: 143,
+  PIT: 134,
+  SD: 135,
+  SEA: 136,
+  SF: 137,
+  STL: 138,
+  TB: 139,
+  TEX: 140,
+  TOR: 141,
+  WSH: 120,
+};
+
+const PITCH_TYPE_NAMES: Record<string, string> = {
+  FA: "Fastball",
+  FF: "Four-Seam Fastball",
+  FT: "Two-Seam Fastball",
+  SI: "Sinker",
+  FC: "Cutter",
+  SL: "Slider",
+  ST: "Sweeper",
+  SV: "Slurve",
+  CU: "Curveball",
+  KC: "Knuckle Curve",
+  CS: "Slow Curve",
+  CH: "Changeup",
+  FS: "Splitter",
+  FO: "Forkball",
+  KN: "Knuckleball",
+};
 
 const MLB_TEAMS: Team[] = [
   { abbr: "ARI", name: "Arizona Diamondbacks", club: "Diamondbacks", division: "NL West" },
@@ -144,6 +198,59 @@ function statusLabel(status: string | null | undefined): string {
   return String(status || "STAY").replace(/_/g, " ").toUpperCase();
 }
 
+function pitchTypeName(value: string | null | undefined): string {
+  if (!value) return "Pitch";
+  const normalized = value.trim().toUpperCase();
+  return PITCH_TYPE_NAMES[normalized] ?? normalizeReason(value);
+}
+
+function teamLogoUrl(abbr: string): string | null {
+  const teamId = MLB_TEAM_IDS[abbr];
+  return teamId ? `https://www.mlbstatic.com/team-logos/${teamId}.svg` : null;
+}
+
+function TeamLogo({ abbr, className = "" }: { abbr: string; className?: string }) {
+  const logo = teamLogoUrl(abbr);
+  return (
+    <span className={`team-logo ${className}`}>
+      {logo ? <img src={logo} alt={`${abbr} logo`} /> : <span>{abbr}</span>}
+    </span>
+  );
+}
+
+function baseOccupancy(baseState: string | null | undefined): { first: boolean; second: boolean; third: boolean } {
+  const value = String(baseState || "").toUpperCase();
+  if (!value || value === "EMPTY" || value === "---" || value === "NONE") {
+    return { first: false, second: false, third: false };
+  }
+  if (/^[01]{3}$/.test(value)) {
+    return { first: value[0] === "1", second: value[1] === "1", third: value[2] === "1" };
+  }
+  return {
+    first: value.includes("1") || value.includes("FIRST") || value.includes("1B"),
+    second: value.includes("2") || value.includes("SECOND") || value.includes("2B"),
+    third: value.includes("3") || value.includes("THIRD") || value.includes("3B"),
+  };
+}
+
+function BaseOutDisplay({ baseState, outs }: { baseState: string | null | undefined; outs: number | null | undefined }) {
+  const bases = baseOccupancy(baseState);
+  return (
+    <div className="base-out-display">
+      <div className="outs-visual" aria-label={`${outs ?? 0} outs`}>
+        {[0, 1, 2].map((index) => (
+          <span key={index} className={(outs ?? 0) > index ? "filled" : ""} />
+        ))}
+      </div>
+      <div className="bases-visual" aria-label={`Base state ${baseState || "empty"}`}>
+        <span className={bases.second ? "base base-second filled" : "base base-second"} />
+        <span className={bases.third ? "base base-third filled" : "base base-third"} />
+        <span className={bases.first ? "base base-first filled" : "base base-first"} />
+      </div>
+    </div>
+  );
+}
+
 function pitchCountForEntry(entry: PitchingReplayEntry): number {
   const state = entry.snapshot.starter_state;
   return (
@@ -163,6 +270,25 @@ function velocityDrop(entry: PitchingReplayEntry): number | null {
   const state = entry.snapshot.starter_state;
   if (state.velo_mean_5 == null || state.seasonal_velo_baseline == null) return null;
   return state.velo_mean_5 - state.seasonal_velo_baseline;
+}
+
+function spinChange(entry: PitchingReplayEntry): number | null {
+  const state = entry.snapshot.starter_state;
+  if (state.spin_mean_5 == null || state.seasonal_spin_baseline == null) return null;
+  return state.spin_mean_5 - state.seasonal_spin_baseline;
+}
+
+function stuffCurveForEntries(entries: PitchingReplayEntry[], throughIndex: number): number[] {
+  const visible = entries.slice(0, throughIndex + 1);
+  if (visible.length === 0) return [];
+  const bucketSize = Math.max(1, Math.ceil(visible.length / 8));
+  const buckets: number[] = [];
+  for (let index = 0; index < visible.length; index += bucketSize) {
+    const bucket = visible.slice(index, index + bucketSize).map(stuffScoreFromEntry);
+    const value = average(bucket);
+    if (value != null) buckets.push(Math.round(value));
+  }
+  return buckets;
 }
 
 function gameLabel(game: EnterpriseGameSummary | null): string {
@@ -610,14 +736,21 @@ function ReplayModule({
   }, [replay, team.abbr]);
   const selectedEntry = teamEntries[Math.min(pitchIndex, Math.max(0, teamEntries.length - 1))] ?? null;
   const selectedGame = games.find((game) => game.game_id === selectedGameId) ?? games[0] ?? null;
-  const peakStatus = teamEntries.reduce(
-    (peak, entry) => (statusRank(entry.recommendation.status) > statusRank(peak) ? entry.recommendation.status : peak),
-    "STAY",
-  );
+  const currentStatus = selectedEntry?.recommendation.status ?? "STAY";
   const selectedPitcher = selectedEntry?.snapshot.pitcher_name ?? recap?.starters.find((pitcher) => pitcher.team === team.abbr)?.pitcher_name ?? "Pitcher";
   const currentPitchCount = selectedEntry ? pitchCountForEntry(selectedEntry) : null;
   const pullEntry = teamEntries.find((entry) => String(entry.recommendation.status).toUpperCase() === "PULL_NOW");
   const pullPitchCount = pullEntry ? pitchCountForEntry(pullEntry) : null;
+  const currentCurve = selectedEntry ? stuffCurveForEntries(teamEntries, Math.min(pitchIndex, teamEntries.length - 1)) : [];
+  const bestCandidate = selectedEntry?.top_candidates?.find((candidate) => candidate.available) ?? selectedEntry?.top_candidates?.[0] ?? null;
+  const decisionAction =
+    String(currentStatus).toUpperCase() === "PULL_NOW"
+      ? "Change pitcher now"
+      : String(currentStatus).toUpperCase() === "PREP"
+        ? "Have the best alternative hot"
+        : String(currentStatus).toUpperCase() === "WATCH"
+          ? "Monitor the next pocket"
+          : "Stay with the pitcher";
   const scoreText = replay
     ? `${replay.game.away_team} ${selectedEntry?.snapshot.away_score ?? "—"} - ${selectedEntry?.snapshot.home_score ?? "—"} ${replay.game.home_team}`
     : "Score pending";
@@ -655,22 +788,23 @@ function ReplayModule({
         />
       ) : (
         <div className="game-replay-shell">
-          <div className={`mound-signal-banner signal-${String(peakStatus).toLowerCase()}`}>
-            <strong>{statusLabel(peakStatus)}</strong>
-            <span>{selectedEntry.recommendation.top_reason_codes.slice(0, 4).map(normalizeReason).join(" · ") || "Model factors pending"}</span>
+          <div className={`mound-signal-banner signal-${String(currentStatus).toLowerCase()}`}>
+            <strong>{statusLabel(currentStatus)}</strong>
+            <span>
+              Pitch {currentPitchCount ?? "—"} · {selectedEntry.recommendation.top_reason_codes.slice(0, 4).map(normalizeReason).join(" · ") || "Model factors pending"}
+            </span>
           </div>
 
           <div className="mound-replay-grid">
             <aside className="mound-situation-card">
               <div>
-                <span className="team-badge">{team.abbr}</span>
+                <TeamLogo abbr={team.abbr} />
                 <h3>{selectedPitcher}</h3>
                 <p>{gameLabel(selectedGame)}</p>
               </div>
+              <BaseOutDisplay baseState={selectedEntry.snapshot.base_state} outs={selectedEntry.snapshot.outs} />
               <div className="situation-grid">
                 <span>Inning <strong>{selectedEntry.snapshot.half === "top" ? "▲" : "▼"}{selectedEntry.snapshot.inning}</strong></span>
-                <span>Outs <strong>{selectedEntry.snapshot.outs}</strong></span>
-                <span>Bases <strong>{selectedEntry.snapshot.base_state || "—"}</strong></span>
                 <span>Pitch # <strong>{currentPitchCount ?? "—"}</strong></span>
                 <span>TTO <strong>{selectedEntry.snapshot.starter_state.times_through_order ?? "—"}</strong></span>
                 <span>Leverage <strong>{formatScore(selectedEntry.snapshot.leverage_index, 2)}</strong></span>
@@ -679,12 +813,18 @@ function ReplayModule({
 
             <div className="pitch-tunnel-card">
               <div className="pitch-type-panel">
-                <strong>{selectedEntry.snapshot.pitch_type || "Pitch"}</strong>
-                <span>Type</span>
-                <b>{formatScore(selectedEntry.snapshot.release_speed ?? selectedEntry.snapshot.starter_state.velo_mean_5, 1)}</b>
-                <span>MPH</span>
-                <b>P{currentPitchCount ?? "—"}</b>
-                <span>Count</span>
+                <div>
+                  <span>Type</span>
+                  <strong>{pitchTypeName(selectedEntry.snapshot.pitch_type)}</strong>
+                </div>
+                <div>
+                  <span>Velocity</span>
+                  <b>{formatScore(selectedEntry.snapshot.release_speed ?? selectedEntry.snapshot.starter_state.velo_mean_5, 1)} mph</b>
+                </div>
+                <div>
+                  <span>Pitch Count</span>
+                  <b>P{currentPitchCount ?? "—"}</b>
+                </div>
               </div>
               <div className="zone-card">
                 <div className="strike-zone">
@@ -713,17 +853,46 @@ function ReplayModule({
             <aside className="degradation-card">
               <p className="eyebrow eyebrow--muted">Degradation Factors</p>
               <MetricBar label="Velocity Drop" value={velocityDrop(selectedEntry)} suffix=" mph" max={-4} inverse />
+              <MetricBar label="Spin Change" value={spinChange(selectedEntry)} suffix=" rpm" max={400} />
               <MetricBar label="Location Dispersion" value={selectedEntry.snapshot.starter_state.location_dispersion_10} max={1.4} />
               <MetricBar label="Zone Miss Distance" value={selectedEntry.snapshot.starter_state.zone_miss_distance_10} suffix=" ft" max={0.75} />
               <MetricBar label="Whiff Loss" value={selectedEntry.snapshot.starter_state.whiff_rate_15 == null ? null : 1 - selectedEntry.snapshot.starter_state.whiff_rate_15} max={1} percent />
               <MetricBar label="Hard Contact" value={selectedEntry.snapshot.starter_state.hard_contact_rate_15} max={1} percent />
               <MetricBar label="Ball Rate" value={selectedEntry.snapshot.starter_state.ball_rate_10} max={1} percent />
+              <MetricBar label="Pitch Mix Drift" value={selectedEntry.snapshot.starter_state.pitch_mix_drift_10} max={1} percent />
               <div className="degradation-score">
                 <span>{Math.round(selectedEntry.snapshot.starter_state.degradation_score * 100)}</span>
                 <strong>Degradation</strong>
                 <em>{statusLabel(selectedEntry.recommendation.status)}</em>
               </div>
+              <p className="factor-note">
+                Missing factors are shown as unavailable when the finalized replay artifact did not expose that pitch-level input for this pitch.
+              </p>
             </aside>
+          </div>
+
+          <div className="replay-decision-grid">
+            <article className="decision-answer-card">
+              <p className="eyebrow">Pull Decision at This Pitch</p>
+              <h3>{decisionAction}</h3>
+              <p>
+                The answer changes pitch by pitch. This view compares the starter&apos;s current degradation and game state against the best relief alternative and its usage cost.
+              </p>
+              <div className="decision-answer-stats">
+                <span>Best alternative <strong>{selectedEntry.recommendation.recommended_reliever_name || bestCandidate?.player_name || "Unavailable"}</strong></span>
+                <span>Usage cost <strong>{formatScore(bestCandidate?.usage_cost, 2)}</strong></span>
+                <span>Decision delta <strong>{formatScore(selectedEntry.recommendation.decision_delta, 2)}</strong></span>
+                <span>Win prob delta <strong>{formatPercent(selectedEntry.recommendation.estimated_win_probability_delta)}</strong></span>
+              </div>
+            </article>
+            <article className="decay-card">
+              <p className="eyebrow">Dynamic Decay Trajectory</p>
+              <h3>Stuff path through selected pitch.</h3>
+              <MiniCurve values={currentCurve} />
+              <p>
+                The curve summarizes how the degradation composite has moved within this outing. Recovery or stabilization can justify staying even after an earlier warning.
+              </p>
+            </article>
           </div>
 
           <div className="replay-controls">
@@ -856,7 +1025,25 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
   );
 }
 
-function BullpenModule({ options }: { options: BullpenOption[] }) {
+function inferredReliefProfiles(profilesPayload: PitcherProfilesPayload | null): PitcherProfile[] {
+  const profiles = profilesPayload?.profiles ?? [];
+  const inferred = profiles.filter((profile) => {
+    const avgMaxPitchCount = average(profile.gameLog.map((game) => game.maxPitchCount));
+    return (avgMaxPitchCount != null && avgMaxPitchCount <= 45) || profile.appearances >= 8;
+  });
+  return (inferred.length > 0 ? inferred : profiles)
+    .slice()
+    .sort((a, b) => (b.projectedRunsSaved ?? -Infinity) - (a.projectedRunsSaved ?? -Infinity));
+}
+
+function BullpenModule({
+  options,
+  profilesPayload,
+}: {
+  options: BullpenOption[];
+  profilesPayload: PitcherProfilesPayload | null;
+}) {
+  const reliefProfiles = inferredReliefProfiles(profilesPayload);
   return (
     <section className="module-surface">
       <div className="section-heading">
@@ -864,38 +1051,84 @@ function BullpenModule({ options }: { options: BullpenOption[] }) {
           <p className="eyebrow">Relief Alternatives</p>
           <h2>Available arms, usage cost, and matchup fit.</h2>
           <p className="lede">
-            The model only recommends a hook when the alternative is materially better after accounting for availability and rest-of-game cost.
+            The top table is current decision-engine context. The season table below lists the club&apos;s staff profiles so the front office can see the broader relief pool, not only the three arms attached to the current board.
           </p>
         </div>
       </div>
 
-      {options.length === 0 ? (
-        <EmptyState title="No relief options available" detail="The enterprise feed has not returned bullpen availability for the selected club." />
-      ) : (
-        <div className="bullpen-table">
-          <div className="bullpen-head">
-            <span>Pitcher</span>
-            <span>Role</span>
-            <span>Availability</span>
-            <span>Matchup Fit</span>
-            <span>Usage Cost</span>
-            <span>Net Option</span>
-          </div>
-          {options.map((option) => (
-            <div className="bullpen-row" key={option.id}>
-              <div>
-                <div className="name">{option.name}</div>
-                <div className="sub">RSS {formatScore(option.rss)}</div>
-              </div>
-              <div className="cell" data-label="Role">{option.role}</div>
-              <div className="cell" data-label="Availability">{option.availability}</div>
-              <div className={`cell ${option.matchupFit == null ? "awaiting" : ""}`} data-label="Matchup Fit">{formatPercent(option.matchupFit)}</div>
-              <div className={`cell ${option.usageCost == null ? "awaiting" : ""}`} data-label="Usage Cost">{formatScore(option.usageCost)}</div>
-              <div className={`cell ${option.netOptionScore == null ? "awaiting" : ""}`} data-label="Net Option">{formatScore(option.netOptionScore)}</div>
+      <div className="bullpen-stack">
+        <div>
+          <div className="section-heading section-heading--compact">
+            <div>
+              <p className="eyebrow eyebrow--navy">Current Decision Alternatives</p>
+              <h2>Arms attached to active hook windows.</h2>
             </div>
-          ))}
+          </div>
+          {options.length === 0 ? (
+            <EmptyState title="No current relief alternatives" detail="No active decision window returned a bullpen alternative for this club." />
+          ) : (
+            <div className="bullpen-table">
+              <div className="bullpen-head">
+                <span>Pitcher</span>
+                <span>Role</span>
+                <span>Availability</span>
+                <span>Matchup Fit</span>
+                <span>Usage Cost</span>
+                <span>Net Option</span>
+              </div>
+              {options.map((option) => (
+                <div className="bullpen-row" key={option.id}>
+                  <div>
+                    <div className="name">{option.name}</div>
+                    <div className="sub">RSS {formatScore(option.rss)}</div>
+                  </div>
+                  <div className="cell" data-label="Role">{option.role}</div>
+                  <div className="cell" data-label="Availability">{option.availability}</div>
+                  <div className={`cell ${option.matchupFit == null ? "awaiting" : ""}`} data-label="Matchup Fit">{formatPercent(option.matchupFit)}</div>
+                  <div className={`cell ${option.usageCost == null ? "awaiting" : ""}`} data-label="Usage Cost">{formatScore(option.usageCost)}</div>
+                  <div className={`cell ${option.netOptionScore == null ? "awaiting" : ""}`} data-label="Net Option">{formatScore(option.netOptionScore)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        <div>
+          <div className="section-heading section-heading--compact">
+            <div>
+              <p className="eyebrow eyebrow--navy">Season Staff View</p>
+              <h2>Relief pool and short-window profiles.</h2>
+            </div>
+          </div>
+          {reliefProfiles.length === 0 ? (
+            <EmptyState title="No season staff profiles loaded" detail="Season-to-date profiles populate from finalized replay artifacts." />
+          ) : (
+            <div className="bullpen-table bullpen-table--season">
+              <div className="bullpen-head">
+                <span>Pitcher</span>
+                <span>Appearances</span>
+                <span>Pitch Windows</span>
+                <span>Avg Deg</span>
+                <span>Pull Now Games</span>
+                <span>Runs Saved</span>
+              </div>
+              {reliefProfiles.map((profile) => (
+                <div className="bullpen-row" key={profile.pitcherId || profile.pitcher}>
+                  <div>
+                    <div className="name">{profile.pitcher}</div>
+                    <div className="sub">{profile.team} · season to date</div>
+                  </div>
+                  <div className="cell" data-label="Appearances">{profile.appearances}</div>
+                  <div className="cell" data-label="Pitch Windows">{profile.pitchWindows}</div>
+                  <div className="cell" data-label="Avg Deg">{formatScore(profile.avgDegradation, 2)}</div>
+                  <div className="cell" data-label="Pull Now Games">{profile.pullNowGames}</div>
+                  <div className="cell" data-label="Runs Saved">{formatRuns(profile.projectedRunsSaved)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -978,18 +1211,155 @@ function timingPillClass(timing: AuditRow["timing"]): string {
   }
 }
 
-function AuditModule({ audits }: { audits: AuditRow[] }) {
+type AuditCase = {
+  id: string;
+  bucket: string;
+  game: string;
+  pitcher: string;
+  inning: string;
+  status: string;
+  timing: AuditRow["timing"];
+  leverageIndex: number | null;
+  actualDecision: string;
+  recommendedDecision: string;
+  bestAlternative: string;
+  projectedRunsSaved: number | null;
+  estimatedWinProbabilityDelta: number | null;
+  note: string;
+  counterfactualSummary: string;
+  opportunityDescription: string;
+  starterValueNextWindow: number | null;
+  alternativeValueNextWindow: number | null;
+};
+
+function auditString(record: Record<string, unknown> | null | undefined, keys: string[], fallback = ""): string {
+  if (!record) return fallback;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return fallback;
+}
+
+function auditNumber(record: Record<string, unknown> | null | undefined, keys: string[]): number | null {
+  if (!record) return null;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function nestedAuditRecord(row: PitchingAuditWindow, key: string): Record<string, unknown> | null {
+  const value = row[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function auditTimingFromBucket(bucket: string): AuditRow["timing"] {
+  if (bucket === "Missed Hook") return "Late";
+  if (bucket === "Delayed Change") return "Held";
+  if (bucket === "Justified Stay") return "On time";
+  return "Held";
+}
+
+function auditCaseFromWindow(row: PitchingAuditWindow, bucket: string, index: number): AuditCase {
+  const starter = nestedAuditRecord(row, "starter");
+  const topCandidate = nestedAuditRecord(row, "top_candidate");
+  const recommendation = nestedAuditRecord(row, "recommendation");
+  const pitcher = auditString(row, ["pitcher_name", "pitcher"], auditString(starter, ["pitcher_name", "name"], "Pitcher"));
+  const game = auditString(row, ["matchup", "game"], auditString(row, ["game_id", "game_pk"], "Game"));
+  const inning = auditString(row, ["inning"], auditString(starter, ["inning"], "Inning pending"));
+  const status = auditString(row, ["status"], auditString(recommendation, ["status"], bucket));
+  const actualOutcome = auditString(row, ["actual_outcome", "actualDecision", "actual_decision"], "");
+  const actualDecision = actualOutcome ? normalizeReason(actualOutcome) : bucket === "Justified Stay" ? "Stayed with starter" : "Decision pending";
+  const recommendedDecision =
+    status.toUpperCase() === "PULL_NOW" || bucket === "Missed Hook" || bucket === "Delayed Change"
+      ? "Change pitcher"
+      : "Stay with pitcher";
+  return {
+    id: `${bucket}-${auditString(row, ["game_id", "game_pk"], "game")}-${pitcher}-${index}`,
+    bucket,
+    game,
+    pitcher,
+    inning: String(inning),
+    status,
+    timing: auditTimingFromBucket(bucket),
+    leverageIndex: auditNumber(row, ["leverage_index"]) ?? auditNumber(starter, ["leverage_index"]),
+    actualDecision,
+    recommendedDecision,
+    bestAlternative: auditString(topCandidate, ["player_name", "name"], "No relief alternative recorded"),
+    projectedRunsSaved: auditNumber(row, ["projected_runs_saved", "estimated_runs_saved", "runs_saved"]),
+    estimatedWinProbabilityDelta: auditNumber(row, ["estimated_win_probability_delta", "win_probability_delta"]),
+    note: auditString(row, ["note", "outcome_note"], "No outcome note recorded."),
+    counterfactualSummary: auditString(row, ["counterfactual_summary", "counterfactualSummary"], "Counterfactual pending calibration."),
+    opportunityDescription: auditString(row, ["opportunity_description", "opportunityDescription"], "Opportunity description pending."),
+    starterValueNextWindow: auditNumber(row, ["starter_value_next_window", "starterValueNextWindow"]) ?? auditNumber(starter, ["value_next_window"]),
+    alternativeValueNextWindow: auditNumber(row, ["alternative_value_next_window", "alternativeValueNextWindow"]) ?? auditNumber(topCandidate, ["net_option_score", "value_next_window"]),
+  };
+}
+
+function auditCaseFromBoardRow(row: AuditRow): AuditCase {
+  return {
+    id: row.id,
+    bucket: "Enterprise Board",
+    game: row.game,
+    pitcher: row.pitcher || row.decision,
+    inning: row.inning || "Inning pending",
+    status: row.recommendedDecision || row.decision,
+    timing: row.timing,
+    leverageIndex: row.leverageIndex ?? null,
+    actualDecision: row.actualDecision || "Decision pending",
+    recommendedDecision: row.recommendedDecision || row.decision,
+    bestAlternative: row.bestAlternative || "No relief alternative recorded",
+    projectedRunsSaved: row.projectedRunsSaved,
+    estimatedWinProbabilityDelta: row.estimatedWinProbabilityDelta,
+    note: row.note,
+    counterfactualSummary: row.counterfactualSummary || row.note,
+    opportunityDescription: row.opportunityDescription || "Opportunity description pending.",
+    starterValueNextWindow: row.starterValueNextWindow ?? null,
+    alternativeValueNextWindow: row.alternativeValueNextWindow ?? null,
+  };
+}
+
+function auditCasesFromSummary(summary: PitchingAuditSummaryPayload | null): AuditCase[] {
+  if (!summary) return [];
+  return [
+    ...(summary.missed_hook_windows ?? []).map((row, index) => auditCaseFromWindow(row, "Missed Hook", index)),
+    ...(summary.delayed_change_windows ?? []).map((row, index) => auditCaseFromWindow(row, "Delayed Change", index)),
+    ...(summary.high_leverage_holdouts ?? []).map((row, index) => auditCaseFromWindow(row, "High-Leverage Hold", index)),
+    ...(summary.justified_stay_windows ?? []).map((row, index) => auditCaseFromWindow(row, "Justified Stay", index)),
+  ];
+}
+
+function AuditModule({
+  audits,
+  auditSummary,
+  auditYear,
+  onAuditYearChange,
+}: {
+  audits: AuditRow[];
+  auditSummary: PitchingAuditSummaryPayload | null;
+  auditYear: string;
+  onAuditYearChange: (year: string) => void;
+}) {
+  const auditCases = useMemo(() => {
+    const summaryCases = auditCasesFromSummary(auditSummary);
+    return summaryCases.length > 0 ? summaryCases : audits.map(auditCaseFromBoardRow);
+  }, [auditSummary, audits]);
   const [selectedAuditId, setSelectedAuditId] = useState("");
   useEffect(() => {
-    if (audits.length === 0) {
+    if (auditCases.length === 0) {
       setSelectedAuditId("");
       return;
     }
-    if (!selectedAuditId || !audits.some((audit) => audit.id === selectedAuditId)) {
-      setSelectedAuditId(audits[0].id);
+    if (!selectedAuditId || !auditCases.some((audit) => audit.id === selectedAuditId)) {
+      setSelectedAuditId(auditCases[0].id);
     }
-  }, [audits, selectedAuditId]);
-  const selected = audits.find((audit) => audit.id === selectedAuditId) ?? audits[0] ?? null;
+  }, [auditCases, selectedAuditId]);
+  const selected = auditCases.find((audit) => audit.id === selectedAuditId) ?? auditCases[0] ?? null;
+  const counts = auditSummary?.window_filtered_counts ?? {};
 
   return (
     <section className="module-surface">
@@ -998,8 +1368,15 @@ function AuditModule({ audits }: { audits: AuditRow[] }) {
           <p className="eyebrow">Postgame Audit</p>
           <h2>Timing, alternative, and counterfactual.</h2>
           <p className="lede">
-            The audit page now ties the Pull Now timing to the best available bullpen alternative and explains the counterfactual opportunity.
+            This view reads the full pitching audit summary for the selected club and season, then ties timing to the best recorded bullpen alternative and counterfactual opportunity.
           </p>
+        </div>
+        <div className="game-picker">
+          <label htmlFor="audit-year-select">Season</label>
+          <select id="audit-year-select" value={auditYear} onChange={(event) => onAuditYearChange(event.target.value)}>
+            <option value="2026">2026</option>
+            <option value="2025">2025</option>
+          </select>
         </div>
       </div>
 
@@ -1008,17 +1385,22 @@ function AuditModule({ audits }: { audits: AuditRow[] }) {
       ) : (
         <div className="audit-layout">
           <aside className="replay-selector">
-            <p className="eyebrow eyebrow--muted">Audit Cases</p>
-            {audits.map((audit) => (
+            <p className="eyebrow eyebrow--muted">Audit Cases · {auditYear}</p>
+            <div className="audit-counts">
+              <span>Missed hooks <strong>{counts.missed_hook_windows_filtered ?? counts.missed_hook_windows ?? "—"}</strong></span>
+              <span>Delayed changes <strong>{counts.delayed_change_windows_filtered ?? counts.delayed_change_windows ?? "—"}</strong></span>
+              <span>Justified stays <strong>{counts.justified_stay_windows_filtered ?? counts.justified_stay_windows ?? "—"}</strong></span>
+            </div>
+            {auditCases.map((audit) => (
               <button
                 key={audit.id}
                 type="button"
                 className={selected.id === audit.id ? "active" : ""}
                 onClick={() => setSelectedAuditId(audit.id)}
               >
-                <strong>{audit.pitcher || audit.decision}</strong>
+                <strong>{audit.pitcher}</strong>
                 <span>{audit.game}</span>
-                <small>{audit.timing} · {formatRuns(audit.projectedRunsSaved)}</small>
+                <small>{audit.bucket} · {formatRuns(audit.projectedRunsSaved)}</small>
               </button>
             ))}
           </aside>
@@ -1027,7 +1409,7 @@ function AuditModule({ audits }: { audits: AuditRow[] }) {
             <div className="audit-hero">
               <div>
                 <p className="eyebrow">Selected Decision</p>
-                <h3>{selected.pitcher || selected.decision}</h3>
+                <h3>{selected.pitcher}</h3>
                 <p>{selected.game} · {selected.inning || "inning pending"} · LI {formatScore(selected.leverageIndex, 2)}</p>
               </div>
               <span className={timingPillClass(selected.timing)}>{selected.timing}</span>
@@ -1047,7 +1429,7 @@ function AuditModule({ audits }: { audits: AuditRow[] }) {
                 <span>Starter next-window value: <strong>{formatScore(selected.starterValueNextWindow, 2)}</strong></span>
                 <span>Alternative next-window value: <strong>{formatScore(selected.alternativeValueNextWindow, 2)}</strong></span>
                 <span>Estimated WP delta: <strong>{formatPercent(selected.estimatedWinProbabilityDelta)}</strong></span>
-                <span>Calibration: <strong>{selected.calibrationSampleCount ?? 0} samples · {formatScore(selected.calibrationFactor, 2)}x</strong></span>
+                <span>Audit source: <strong>{auditSummary ? "Full summary artifact" : "Enterprise board fallback"}</strong></span>
               </div>
             </div>
 
@@ -1059,10 +1441,10 @@ function AuditModule({ audits }: { audits: AuditRow[] }) {
                 <span>Runs Saved</span>
                 <span>Outcome Note</span>
               </div>
-              {audits.map((audit) => (
+              {auditCases.map((audit) => (
                 <div className="audit-row" key={audit.id}>
                   <div><div className="game">{audit.game}</div></div>
-                  <div className="cell" data-label="Decision"><div className="decision">{audit.decision}</div></div>
+                  <div className="cell" data-label="Decision"><div className="decision">{audit.recommendedDecision}</div></div>
                   <div data-label="Timing"><span className={timingPillClass(audit.timing)}>{audit.timing}</span></div>
                   <div className={`cell ${audit.projectedRunsSaved == null ? "awaiting" : ""}`} data-label="Runs Saved">{formatRuns(audit.projectedRunsSaved)}</div>
                   <div className="cell audit-note" data-label="Outcome">{audit.counterfactualSummary || audit.note || "No note recorded."}</div>
@@ -1278,6 +1660,8 @@ export default function App() {
   const [replay, setReplay] = useState<PitchingReplayResponse | null>(null);
   const [recap, setRecap] = useState<PitchingGameRecap | null>(null);
   const [profilesPayload, setProfilesPayload] = useState<PitcherProfilesPayload | null>(null);
+  const [auditSummary, setAuditSummary] = useState<PitchingAuditSummaryPayload | null>(null);
+  const [auditYear, setAuditYear] = useState("2026");
   const [recapSettings, setRecapSettings] = useState<PitchingRecapSettings | null>(null);
 
   const selectedTeam = MLB_TEAMS.find((team) => team.abbr === selectedTeamAbbr) ?? MLB_TEAMS[0];
@@ -1294,15 +1678,17 @@ export default function App() {
     let cancelled = false;
     async function loadGamesAndProfiles() {
       try {
-        const [gamePayload, profilePayload, settingsPayload] = await Promise.all([
+        const [gamePayload, profilePayload, settingsPayload, auditPayload] = await Promise.all([
           fetchEnterpriseGames({ league: "mlb", team: selectedTeam.abbr, limit: 250 }),
           fetchPitcherProfiles({ league: "mlb", team: selectedTeam.abbr, year: "2026", limit: 500 }),
           fetchPitchingRecapSettings("mlb"),
+          fetchPitchingAuditSummary({ league: "mlb", team: selectedTeam.abbr, year: auditYear, limit: 500 }),
         ]);
         if (cancelled) return;
         setGames(gamePayload.games);
         setProfilesPayload(profilePayload);
         setRecapSettings(settingsPayload);
+        setAuditSummary(auditPayload);
         setSelectedGameId((current) => {
           if (current && gamePayload.games.some((game) => game.game_id === current)) return current;
           return gamePayload.games[0]?.game_id ?? null;
@@ -1311,6 +1697,7 @@ export default function App() {
         if (!cancelled) {
           setGames([]);
           setProfilesPayload(null);
+          setAuditSummary(null);
         }
       }
     }
@@ -1318,7 +1705,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTeam.abbr]);
+  }, [selectedTeam.abbr, auditYear]);
 
   useEffect(() => {
     if (!selectedGameId) {
@@ -1359,11 +1746,11 @@ export default function App() {
       case "pitchers":
         return <PitchersModule profilesPayload={profilesPayload} />;
       case "bullpen":
-        return <BullpenModule options={bullpenOptions} />;
+        return <BullpenModule options={bullpenOptions} profilesPayload={profilesPayload} />;
       case "matrix":
         return <MatrixModule decisions={decisions} bullpenOptions={bullpenOptions} />;
       case "audit":
-        return <AuditModule audits={audits} />;
+        return <AuditModule audits={audits} auditSummary={auditSummary} auditYear={auditYear} onAuditYearChange={setAuditYear} />;
       case "recaps":
         return (
           <RecapsModule

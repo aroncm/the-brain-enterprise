@@ -1,6 +1,7 @@
 import type {
   EnterpriseGamesPayload,
   PitcherProfilesPayload,
+  PitchingAuditSummaryPayload,
   PitchingGameRecap,
   PitchingRecapEmailResponse,
   PitchingRecapSettings,
@@ -85,6 +86,25 @@ export function fetchPitcherProfiles(query: RunSavingBoardQuery & { year?: strin
   if (query.year) params.set("year", query.year);
   if (query.limit != null) params.set("limit", String(query.limit));
   return fetchJson<PitcherProfilesPayload>(`/v1/enterprise/run-saving/pitcher-profiles?${params.toString()}`);
+}
+
+export function fetchPitchingAuditSummary(
+  query: RunSavingBoardQuery & {
+    year?: string;
+    leverage_band?: "ROUTINE" | "ELEVATED" | "HIGH";
+    status?: "STAY" | "WATCH" | "PREP" | "PULL_NOW";
+    actual_outcome?: "changed" | "stayed";
+  } = {},
+): Promise<PitchingAuditSummaryPayload> {
+  const params = new URLSearchParams();
+  params.set("league", query.league ?? "mlb");
+  params.set("limit", String(query.limit ?? 500));
+  if (query.team) params.set("team", query.team);
+  if (query.year) params.set("year", query.year);
+  if (query.leverage_band) params.set("leverage_band", query.leverage_band);
+  if (query.status) params.set("status", query.status);
+  if (query.actual_outcome) params.set("actual_outcome", query.actual_outcome);
+  return fetchJson<PitchingAuditSummaryPayload>(`/v1/pitching/audit/summary?${params.toString()}`);
 }
 
 export function fetchPitchingReplay(gameId: string, league: "mlb" | "triple_a" = "mlb"): Promise<PitchingReplayResponse> {

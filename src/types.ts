@@ -240,6 +240,7 @@ export type PitchingReplayEntry = {
       hard_contact_rate_15: number;
       whiff_rate_15?: number | null;
       ball_rate_10?: number | null;
+      pitch_mix_drift_10?: number | null;
       degradation_score: number;
     };
   };
@@ -282,6 +283,43 @@ export type PitchingReplayResponse = {
     actual_changes_within_next_pocket: number;
   };
   entries: PitchingReplayEntry[];
+};
+
+export type PitchingAuditWindow = Record<string, unknown> & {
+  game_id?: string | number | null;
+  game_pk?: string | number | null;
+  game_date?: string | null;
+  matchup?: string | null;
+  team?: string | null;
+  pitcher_name?: string | null;
+  pitcher?: string | null;
+  inning?: number | string | null;
+  half?: string | null;
+  status?: string | null;
+  leverage_index?: number | null;
+  projected_runs_saved?: number | null;
+  estimated_runs_saved?: number | null;
+  estimated_win_probability_delta?: number | null;
+  actual_outcome?: string | null;
+  note?: string | null;
+  counterfactual_summary?: string | null;
+  opportunity_description?: string | null;
+  starter?: Record<string, unknown> | null;
+  top_candidate?: Record<string, unknown> | null;
+  recommendation?: Record<string, unknown> | null;
+};
+
+export type PitchingAuditSummaryPayload = {
+  source_summary?: {
+    generated_at?: string | null;
+    active_filters?: Record<string, unknown>;
+  };
+  window_summary?: Record<string, unknown>;
+  window_filtered_counts?: Record<string, number>;
+  delayed_change_windows?: PitchingAuditWindow[];
+  missed_hook_windows?: PitchingAuditWindow[];
+  justified_stay_windows?: PitchingAuditWindow[];
+  high_leverage_holdouts?: PitchingAuditWindow[];
 };
 
 export type PitchingRecapPitcher = {
