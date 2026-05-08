@@ -38,12 +38,17 @@ export type PitcherDecision = {
   transitionCost: number | null;
   bullpenUsageCost: number | null;
   projectedRunsSaved: number | null;
+  modelImpliedRunsSaved?: number | null;
   dollarsProtected: number | null;
   recommendation: Recommendation;
   recommendationReason: string;
   stuffCurve: number[];
   topReasons: string[];
   calibrationStatus: string;
+  calibrationBucket?: string | null;
+  calibrationSampleCount?: number | null;
+  calibrationFactor?: number | null;
+  calibrationSource?: string | null;
 };
 
 export type BullpenOption = {
@@ -64,9 +69,12 @@ export type AuditRow = {
   decision: string;
   timing: "Early" | "On time" | "Late" | "Held";
   projectedRunsSaved: number | null;
+  modelImpliedRunsSaved?: number | null;
   estimatedWinProbabilityDelta: number | null;
   realizedDelayTax: number | null;
   actualRunsAfter: number | null;
+  calibrationSampleCount?: number | null;
+  calibrationFactor?: number | null;
   note: string;
 };
 
@@ -98,6 +106,8 @@ export type RunSavingSummary = {
   tripleAConversionCandidateCount: number;
   sourceSnapshotCount: number | null;
   sourceGameCount: number | null;
+  calibrationWindowCount?: number | null;
+  calibrationBucketCount?: number | null;
 };
 
 export type RunSavingBoardPayload = {
@@ -106,4 +116,10 @@ export type RunSavingBoardPayload = {
   bullpenOptions: BullpenOption[];
   audits: AuditRow[];
   tripleAConversionCandidates: TripleAConversionCandidate[];
+  calibration?: {
+    source: string;
+    generatedAt: string | null;
+    windowCount: number;
+    bucketCount: number;
+  };
 };

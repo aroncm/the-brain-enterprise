@@ -812,6 +812,556 @@ button {
   font-weight: 600;
 }
 
+/* ============ Team page shell ============ */
+
+.api-note {
+  font-size: 10px;
+  color: var(--muted-soft);
+}
+
+.team-command {
+  display: grid;
+  grid-template-columns: 260px minmax(220px, 0.8fr) minmax(0, 1.4fr);
+  gap: 16px;
+  align-items: stretch;
+  margin: -10px 0 34px;
+}
+
+.team-picker,
+.team-identity-card,
+.module-nav {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 4px;
+  box-shadow: var(--shadow-soft);
+}
+
+.team-picker {
+  padding: 16px;
+}
+
+.team-picker label,
+.team-identity-card span {
+  display: block;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.team-picker select {
+  width: 100%;
+  margin-top: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--navy-900);
+  font-family: "Public Sans", sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.team-identity-card {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  border-top: 3px solid var(--gold-500);
+}
+
+.team-identity-card strong {
+  color: var(--navy-900);
+  font-family: "Newsreader", serif;
+  font-size: 26px;
+  line-height: 1.05;
+}
+
+.module-nav {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.module-nav button {
+  min-height: 78px;
+  padding: 12px 10px;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.module-nav button:last-child {
+  border-right: 0;
+}
+
+.module-nav button:hover,
+.module-nav button.active {
+  background: var(--navy-900);
+  color: var(--paper);
+}
+
+.module-nav button span,
+.module-nav button small {
+  display: block;
+}
+
+.module-nav button span {
+  font-family: "Newsreader", serif;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.module-nav button small {
+  margin-top: 6px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.module-surface {
+  margin-bottom: 56px;
+}
+
+.section-heading--compact {
+  margin-bottom: 14px;
+}
+
+.section-heading--compact h2 {
+  font-size: clamp(26px, 2.5vw, 34px);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.stat-card {
+  min-height: 148px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stat-card > span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.stat-card strong {
+  color: var(--navy-900);
+  font-family: "Newsreader", serif;
+  font-size: 34px;
+  line-height: 1;
+}
+
+.stat-card p {
+  margin-top: auto;
+  color: var(--muted);
+  font-family: "Newsreader", serif;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.module-grid {
+  display: grid;
+  gap: 22px;
+}
+
+.module-grid--wide-left {
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+}
+
+.brief-card {
+  padding: 28px;
+  border: 1px solid var(--gold-100);
+  border-top: 3px solid var(--gold-500);
+  border-radius: 4px;
+  background: var(--paper-2);
+}
+
+.brief-card h3 {
+  margin: 8px 0 10px;
+  font-size: 28px;
+}
+
+.brief-card p {
+  color: var(--ink-soft);
+  font-family: "Newsreader", serif;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.brief-facts {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--gold-100);
+}
+
+.brief-facts span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-cell .value.text-value {
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+/* ============ Replay module ============ */
+
+.replay-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 22px;
+}
+
+.replay-selector {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.replay-selector .eyebrow {
+  margin-bottom: 4px;
+}
+
+.replay-selector button {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--navy-900);
+  text-align: left;
+  cursor: pointer;
+}
+
+.replay-selector button.active,
+.replay-selector button:hover {
+  border-color: var(--navy-900);
+  background: var(--navy-900);
+  color: var(--paper);
+}
+
+.replay-selector strong,
+.replay-selector span,
+.replay-selector small {
+  display: block;
+}
+
+.replay-selector strong {
+  font-family: "Newsreader", serif;
+  font-size: 20px;
+}
+
+.replay-selector span,
+.replay-selector small {
+  margin-top: 4px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.74;
+}
+
+.replay-stage {
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--navy-900);
+  color: var(--paper);
+}
+
+.replay-headline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 22px;
+}
+
+.replay-headline h3 {
+  margin: 6px 0;
+  color: var(--paper);
+  font-size: 42px;
+}
+
+.replay-headline p {
+  color: rgba(251, 250, 245, 0.7);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.runs-saved-tile {
+  padding: 16px;
+  border: 1px solid rgba(251, 250, 245, 0.14);
+  border-top: 3px solid var(--gold-500);
+  background: rgba(251, 250, 245, 0.04);
+}
+
+.runs-saved-tile span {
+  display: block;
+  color: rgba(251, 250, 245, 0.62);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.runs-saved-tile strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--gold-300);
+  font-family: "Newsreader", serif;
+  font-size: 38px;
+  line-height: 1;
+}
+
+.replay-curve-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  gap: 20px;
+  align-items: center;
+  padding: 20px;
+  border: 1px solid rgba(251, 250, 245, 0.12);
+  background: rgba(251, 250, 245, 0.04);
+}
+
+.curve-copy h4 {
+  margin: 8px 0;
+  color: var(--paper);
+  font-size: 26px;
+}
+
+.curve-copy p {
+  color: rgba(251, 250, 245, 0.72);
+  font-family: "Newsreader", serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.replay-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.replay-metric-grid .stat-card {
+  min-height: 134px;
+  background: rgba(251, 250, 245, 0.96);
+}
+
+.pitch-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
+  align-items: end;
+  gap: 8px;
+  height: 124px;
+  margin-top: 24px;
+  padding: 16px 12px 8px;
+  border: 1px solid rgba(251, 250, 245, 0.12);
+  background: rgba(251, 250, 245, 0.03);
+}
+
+.pitch-strip div {
+  min-height: 18px;
+  border-top: 3px solid var(--gold-400);
+  background: linear-gradient(180deg, rgba(217, 182, 89, 0.35), rgba(217, 182, 89, 0.05));
+  position: relative;
+}
+
+.pitch-strip span {
+  position: absolute;
+  left: 50%;
+  bottom: -18px;
+  transform: translateX(-50%);
+  color: rgba(251, 250, 245, 0.52);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+/* ============ Pitcher profile module ============ */
+
+.pitcher-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.pitcher-profile-card {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+}
+
+.pitcher-profile-card h3 {
+  margin: 8px 0 12px;
+  font-size: 28px;
+}
+
+.pitcher-profile-card p {
+  margin-top: 14px;
+  color: var(--muted);
+  font-family: "Newsreader", serif;
+  font-style: italic;
+  font-size: 15px;
+}
+
+.profile-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.profile-metrics span {
+  padding: 10px;
+  background: var(--blue-50);
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.profile-metrics strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--navy-900);
+  font-size: 13px;
+}
+
+/* ============ Matrix module ============ */
+
+.decision-matrix {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 46px 0 0 86px;
+}
+
+.matrix-axis {
+  position: absolute;
+  color: var(--red-500);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.matrix-axis--top {
+  top: 0;
+  left: 86px;
+  right: 0;
+  text-align: center;
+}
+
+.matrix-axis--side {
+  top: 52%;
+  left: 0;
+  transform: rotate(-90deg);
+  transform-origin: left top;
+}
+
+.matrix-cell {
+  min-height: 220px;
+  padding: 24px;
+  border-top: 8px solid var(--gold-500);
+  background: var(--gold-50);
+}
+
+.matrix-cell.tandem {
+  background: #f5e1dd;
+  border-top-color: var(--red-500);
+}
+
+.matrix-cell span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.matrix-cell h3 {
+  margin: 22px 0 10px;
+  font-size: 32px;
+}
+
+.matrix-cell p {
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.matrix-cell strong {
+  display: inline-flex;
+  margin-top: 18px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--navy-900);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.audit-note {
+  font-family: "Newsreader", serif;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.muted-cell {
+  color: var(--muted);
+}
+
 /* ============ Empty / states ============ */
 
 .empty-state {
@@ -909,6 +1459,23 @@ button {
 /* ============ Responsive ============ */
 
 @media (max-width: 1100px) {
+  .team-command,
+  .module-grid--wide-left,
+  .replay-layout,
+  .replay-curve-card {
+    grid-template-columns: 1fr;
+  }
+
+  .module-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .stat-grid,
+  .replay-metric-grid,
+  .pitcher-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .opportunity-card {
     grid-template-columns: 1fr;
   }
@@ -942,6 +1509,34 @@ button {
   .app-shell {
     width: calc(100vw - 28px);
     padding: 28px 0 48px;
+  }
+
+  .team-command,
+  .stat-grid,
+  .replay-headline,
+  .replay-metric-grid,
+  .pitcher-profile-grid,
+  .decision-matrix {
+    grid-template-columns: 1fr;
+  }
+
+  .module-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .decision-matrix {
+    padding: 0;
+  }
+
+  .matrix-axis {
+    position: static;
+    transform: none;
+    text-align: left;
+    grid-column: 1 / -1;
+  }
+
+  .replay-stage {
+    padding: 18px;
   }
 
   .section-heading {

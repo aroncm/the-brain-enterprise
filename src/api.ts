@@ -42,6 +42,18 @@ async function fetchJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function fetchRunSavingBoard(league: "mlb" | "triple_a" = "mlb"): Promise<RunSavingBoardPayload> {
-  return fetchJson<RunSavingBoardPayload>(`/v1/enterprise/run-saving/board?league=${league}`);
+export type RunSavingBoardQuery = {
+  league?: "mlb" | "triple_a";
+  team?: string;
+  date?: string;
+  limit?: number;
+};
+
+export function fetchRunSavingBoard(query: RunSavingBoardQuery = {}): Promise<RunSavingBoardPayload> {
+  const params = new URLSearchParams();
+  params.set("league", query.league ?? "mlb");
+  if (query.team) params.set("team", query.team);
+  if (query.date) params.set("date", query.date);
+  if (query.limit != null) params.set("limit", String(query.limit));
+  return fetchJson<RunSavingBoardPayload>(`/v1/enterprise/run-saving/board?${params.toString()}`);
 }
