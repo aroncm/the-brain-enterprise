@@ -1,7 +1,8 @@
 import type { RunSavingBoardPayload } from "./types";
 
+const DEFAULT_API_BASE = "https://aroncm--abs-challenge-api-tuned-fastapi-app-tuned.modal.run";
 const viteEnv = import.meta.env ?? {};
-const API_BASE = (viteEnv.VITE_BASEBALL_BRAIN_API_BASE ?? "").replace(/\/+$/, "");
+const API_BASE = (viteEnv.VITE_BASEBALL_BRAIN_API_BASE ?? DEFAULT_API_BASE).replace(/\/+$/, "");
 
 export function getConfiguredApiBase(): string {
   return API_BASE;
@@ -9,7 +10,7 @@ export function getConfiguredApiBase(): string {
 
 export class ApiConfigurationError extends Error {
   constructor() {
-    super("VITE_BASEBALL_BRAIN_API_BASE is not configured.");
+    super("Baseball brAIn API base is not configured.");
     this.name = "ApiConfigurationError";
   }
 }
