@@ -33,6 +33,47 @@ body {
   font-family: "Public Sans", "Avenir Next", sans-serif;
 }
 
+.fatal-preview {
+  width: min(760px, calc(100vw - 32px));
+  margin: 64px auto;
+  border: 1px solid rgba(168, 58, 50, 0.28);
+  border-radius: 24px;
+  padding: 28px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: var(--shadow);
+}
+
+.fatal-preview p {
+  margin: 0 0 10px;
+  color: var(--red-500);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.fatal-preview h1 {
+  margin-bottom: 16px;
+  color: var(--ink);
+  font-size: clamp(30px, 6vw, 54px);
+}
+
+.fatal-preview pre {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  color: #6f251f;
+  background: #fff3f1;
+  white-space: pre-wrap;
+}
+
+.fatal-preview span {
+  color: var(--muted);
+}
+
 .app-shell {
   width: min(1480px, calc(100vw - 48px));
   margin: 0 auto;

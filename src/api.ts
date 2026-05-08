@@ -1,6 +1,7 @@
 import type { RunSavingBoardPayload } from "./types";
 
-const API_BASE = (import.meta.env.VITE_BASEBALL_BRAIN_API_BASE ?? "").replace(/\/+$/, "");
+const viteEnv = import.meta.env ?? {};
+const API_BASE = (viteEnv.VITE_BASEBALL_BRAIN_API_BASE ?? "").replace(/\/+$/, "");
 
 export function getConfiguredApiBase(): string {
   return API_BASE;
