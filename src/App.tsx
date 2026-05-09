@@ -1262,15 +1262,28 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
   );
 }
 
-function inferredReliefProfiles(profilesPayload: PitcherProfilesPayload | null): PitcherProfile[] {
+function normalizedName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function inferredReliefProfiles(profilesPayload: PitcherProfilesPayload | null, options: BullpenOption[], auditCases: AuditCase[]): PitcherProfile[] {
   const profiles = profilesPayload?.profiles ?? [];
-  const inferred = profiles.filter((profile) => {
-    const avgMaxPitchCount = average(profile.gameLog.map((game) => game.maxPitchCount));
-    return (avgMaxPitchCount != null && avgMaxPitchCount <= 45) || profile.appearances >= 8;
+  const knownReliefNames = new Set(
+    [
+      ...options.filter((option) => !String(option.role || "").toLowerCase().includes("starter")).map((option) => option.name),
+      ...auditCases.map((audit) => audit.bestAlternative),
+    ]
+      .map(normalizedName)
+      .filter(Boolean),
+  );
+  return profiles.filter((profile) => {
+    const name = normalizedName(profile.pitcher);
+    const knownReliefAlternative = Array.from(knownReliefNames).some((known) => name.includes(known) || known.includes(name));
+    const startsLikeStarter = profile.gameLog.filter((game) => game.maxPitchCount >= 55 || (game.innings?.[0] ?? 99) <= 2).length;
+    const reliefLikeOutings = profile.gameLog.filter((game) => game.maxPitchCount <= 45 && (game.innings?.[0] ?? 99) >= 4).length;
+    const mostlyStarter = startsLikeStarter >= Math.max(1, Math.ceil(profile.gameLog.length * 0.4));
+    return knownReliefAlternative || (reliefLikeOutings >= 3 && !mostlyStarter);
   });
-  return (inferred.length > 0 ? inferred : profiles)
-    .slice()
-    .sort((a, b) => (b.projectedRunsSaved ?? -Infinity) - (a.projectedRunsSaved ?? -Infinity));
 }
 
 type ReliefWorkloadProfile = {
@@ -1349,8 +1362,8 @@ function BullpenModule({
   profilesPayload: PitcherProfilesPayload | null;
   auditSummary: PitchingAuditSummaryPayload | null;
 }) {
-  const reliefProfiles = inferredReliefProfiles(profilesPayload);
   const auditCases = useMemo(() => auditCasesFromSummary(auditSummary), [auditSummary]);
+  const reliefProfiles = useMemo(() => inferredReliefProfiles(profilesPayload, options, auditCases), [profilesPayload, options, auditCases]);
   const workloadProfiles = useMemo(
     () =>
       reliefProfiles
@@ -1369,7 +1382,7 @@ function BullpenModule({
           <p className="eyebrow">Relief Alternatives</p>
           <h2>Who can cover length, and when the change made sense.</h2>
           <p className="lede">
-            Read this as the bridge from starter degradation to bullpen deployment. The current table shows the arms attached to active hook windows; the season table translates finalized game logs into multi-inning reliability and audit opportunities.
+            Read this as the bridge from starter degradation to bullpen deployment. This page intentionally excludes starters unless they were explicitly recorded as a bullpen alternative; starter-to-relief conversion belongs on the Triple-A/role-conversion surface.
           </p>
         </div>
       </div>
@@ -1432,7 +1445,7 @@ function BullpenModule({
             </div>
           </div>
           {workloadProfiles.length === 0 ? (
-            <EmptyState title="No season staff profiles loaded" detail="Season-to-date profiles populate from finalized replay artifacts." />
+            <EmptyState title="No confirmed relief profiles loaded" detail="The bullpen page now excludes inferred starters. It will populate from relievers attached to audit alternatives or repeated relief-like season appearances." />
           ) : (
             <div className="bullpen-table bullpen-table--season">
               <div className="bullpen-head">
