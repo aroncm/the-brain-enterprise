@@ -59,6 +59,7 @@ export type RunSavingBoardQuery = {
   league?: "mlb" | "triple_a";
   team?: string;
   date?: string;
+  year?: string;
   limit?: number;
 };
 
@@ -67,6 +68,7 @@ export function fetchRunSavingBoard(query: RunSavingBoardQuery = {}): Promise<Ru
   params.set("league", query.league ?? "mlb");
   if (query.team) params.set("team", query.team);
   if (query.date) params.set("date", query.date);
+  if (query.year) params.set("year", query.year);
   if (query.limit != null) params.set("limit", String(query.limit));
   return fetchJson<RunSavingBoardPayload>(`/v1/enterprise/run-saving/board?${params.toString()}`);
 }
@@ -76,6 +78,7 @@ export function fetchEnterpriseGames(query: RunSavingBoardQuery = {}): Promise<E
   params.set("league", query.league ?? "mlb");
   if (query.team) params.set("team", query.team);
   if (query.date) params.set("date", query.date);
+  if (query.year) params.set("year", query.year);
   if (query.limit != null) params.set("limit", String(query.limit));
   return fetchJson<EnterpriseGamesPayload>(`/v1/enterprise/run-saving/games?${params.toString()}`);
 }

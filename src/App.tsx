@@ -582,6 +582,18 @@ function auditWindowMatrixKey(row: PitchingAuditWindow): MatrixBucket {
   return "workload";
 }
 
+function auditRowMatrixKey(row: AuditRow): MatrixBucket {
+  const starterValue = row.starterValueNextWindow;
+  const alternativeValue = row.alternativeValueNextWindow;
+  const preventableRuns = row.projectedRunsSaved ?? row.modelImpliedRunsSaved;
+  const starterAbove = starterValue == null ? false : starterValue >= 0;
+  const bullpenAbove = Math.max(alternativeValue ?? -Infinity, preventableRuns ?? -Infinity) >= 0.25;
+  if (bullpenAbove && starterAbove) return "standard";
+  if (bullpenAbove && !starterAbove) return "tandem";
+  if (!bullpenAbove && starterAbove) return "push";
+  return "workload";
+}
+
 function seasonMatrixCounts(summary: PitchingAuditSummaryPayload | null): Record<MatrixBucket, number> {
   return overviewAuditWindows(summary).reduce(
     (counts, row) => {
@@ -1209,7 +1221,7 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
           </p>
           {profilesPayload?.summary ? (
             <p className="source-note">
-              Official appearances: {profilesPayload.summary.officialAppearanceCount ?? UNAVAILABLE} · relief appearances: {profilesPayload.summary.officialReliefAppearanceCount ?? UNAVAILABLE} · workload facts: {profilesPayload.summary.workloadFactCount ?? UNAVAILABLE}
+              Official appearances: {profilesPayload.summary.officialAppearanceCount ?? UNAVAILABLE} · relief appearances: {profilesPayload.summary.officialReliefAppearanceCount ?? UNAVAILABLE} · workload facts: {profilesPayload.summary.workloadFactCount ?? UNAVAILABLE} · RSS signals: {profilesPayload.summary.rssSignalCount ?? UNAVAILABLE}
             </p>
           ) : null}
         </div>
@@ -1346,6 +1358,8 @@ function reliefProfileOfficialFacts(profile: PitcherProfile) {
   const multiInningRelief = reliefGames.filter((game) => (game.officialInningsPitched ?? 0) >= 2);
   const avgReliefIp = average(reliefGames.map((game) => game.officialInningsPitched));
   const avgReliefPitches = average(reliefGames.map((game) => game.officialPitchCount));
+  const rssGames = reliefGames.filter((game) => game.rssScore != null);
+  const rssDistressGames = rssGames.filter((game) => String(game.rssLabel || "").toUpperCase() === "DISTRESS" || (game.rssScore ?? 0) >= 0.5);
   const distressGames = reliefGames.filter((game) => String(game.peakStatus || "").toUpperCase().includes("PULL") || (game.maxDegradation ?? 0) >= 1.15);
   return {
     reliefGames: workload?.reliefAppearances ?? reliefGames.length,
@@ -1356,7 +1370,9 @@ function reliefProfileOfficialFacts(profile: PitcherProfile) {
     avgDaysRest: workload?.avgDaysRest ?? average(reliefGames.map((game) => game.daysRestBeforeAppearance)),
     avgPitchesLast3Days: workload?.avgPitchesLast3Days ?? average(reliefGames.map((game) => game.pitchesLast3Days)),
     maxPitchesLast3Days: workload?.maxPitchesLast3Days ?? Math.max(...reliefGames.map((game) => game.pitchesLast3Days ?? 0), 0),
-    distressGames: distressGames.length,
+    distressGames: rssDistressGames.length || distressGames.length,
+    rssGames: rssGames.length,
+    peakRss: rssGames.length > 0 ? Math.max(...rssGames.map((game) => game.rssScore ?? 0)) : null,
     workloadSource: workload?.workloadSource ?? "statsapi_official_boxscore_appearance_history",
   };
 }
@@ -1431,8 +1447,8 @@ function BullpenModule({
                   <div>
                     <div className="name">{option.name}</div>
                     <div className="sub">
-                      RSS {formatScore(option.rss)}
-                      {option.rssSource === "unavailable" ? " · source unavailable" : ""}
+                      RSS {formatScore(option.rss)}{option.rssLabel ? ` · ${option.rssLabel}` : ""}
+                      {option.rssSource === "unavailable" ? " · source unavailable" : option.rssSource ? ` · ${option.rssSource}` : ""}
                     </div>
                   </div>
                   <div className="cell" data-label="Role">{option.role || UNAVAILABLE}</div>
@@ -1475,7 +1491,7 @@ function BullpenModule({
                 <span>Multi-Inning Relief</span>
                 <span>Avg Relief Load</span>
                 <span>Rest / Recent Load</span>
-                <span>Model Distress Games</span>
+                <span>RSS Signals</span>
                 <span>Appearances</span>
                 <span>Preventable Runs</span>
               </div>
@@ -1500,7 +1516,10 @@ function BullpenModule({
                         {facts.avgPitchesLast3Days == null ? UNAVAILABLE : `${formatScore(facts.avgPitchesLast3Days, 0)} pitches`} avg last 3 days · {facts.backToBack} B2B
                       </small>
                     </div>
-                    <div className="cell" data-label="Model Distress Games">{facts.distressGames}</div>
+                    <div className="cell" data-label="RSS Signals">
+                      {facts.rssGames} measured
+                      <small>{facts.distressGames} distress · peak {formatScore(facts.peakRss, 2)}</small>
+                    </div>
                     <div className="cell" data-label="Appearances">{relief.profile.appearances}</div>
                     <div className="cell" data-label="Preventable Runs">{formatRuns(relief.profile.projectedRunsSaved)}</div>
                   </div>
@@ -1683,6 +1702,30 @@ function auditCaseFromWindow(row: PitchingAuditWindow, bucket: string, index: nu
   };
 }
 
+function auditCaseFromEnterpriseRow(row: AuditRow, index: number): AuditCase {
+  return {
+    id: row.id || `enterprise-audit-${index}`,
+    bucket: row.timing || "Enterprise Audit",
+    matrixBucket: auditRowMatrixKey(row),
+    game: row.game || "Game",
+    pitcher: row.pitcher || "Pitcher",
+    inning: row.inning || "Inning pending",
+    status: row.recommendedDecision || row.decision || "Decision",
+    timing: row.timing,
+    leverageIndex: row.leverageIndex ?? null,
+    actualDecision: row.actualDecision || "Unavailable",
+    recommendedDecision: row.recommendedDecision || "Unavailable",
+    bestAlternative: row.bestAlternative || UNAVAILABLE,
+    projectedRunsSaved: row.projectedRunsSaved ?? row.modelImpliedRunsSaved ?? null,
+    estimatedWinProbabilityDelta: row.estimatedWinProbabilityDelta ?? null,
+    note: row.note || "",
+    counterfactualSummary: row.counterfactualSummary || "Counterfactual unavailable in enterprise audit payload.",
+    opportunityDescription: row.opportunityDescription || "",
+    starterValueNextWindow: row.starterValueNextWindow ?? null,
+    alternativeValueNextWindow: row.alternativeValueNextWindow ?? null,
+  };
+}
+
 function auditCasesFromSummary(summary: PitchingAuditSummaryPayload | null): AuditCase[] {
   if (!summary) return [];
   return [
@@ -1693,18 +1736,24 @@ function auditCasesFromSummary(summary: PitchingAuditSummaryPayload | null): Aud
   ];
 }
 
+function auditCasesFromEnterpriseRows(audits: AuditRow[]): AuditCase[] {
+  return audits.map((row, index) => auditCaseFromEnterpriseRow(row, index));
+}
+
 function AuditModule({
+  audits,
   auditSummary,
   auditYear,
   onAuditYearChange,
 }: {
+  audits: AuditRow[];
   auditSummary: PitchingAuditSummaryPayload | null;
   auditYear: string;
   onAuditYearChange: (year: string) => void;
 }) {
   const auditCases = useMemo(() => {
-    return auditCasesFromSummary(auditSummary);
-  }, [auditSummary]);
+    return audits.length > 0 ? auditCasesFromEnterpriseRows(audits) : auditCasesFromSummary(auditSummary);
+  }, [audits, auditSummary]);
   const [matrixFilter, setMatrixFilter] = useState<MatrixFilter>("all");
   const [selectedAuditId, setSelectedAuditId] = useState("");
   const matrixCounts = useMemo(
@@ -1741,7 +1790,7 @@ function AuditModule({
           <p className="eyebrow">Postgame Audit</p>
           <h2>Timing, alternative, and counterfactual.</h2>
           <p className="lede">
-            This view reads only the full pitching audit summary for the selected club and season. If that artifact does not include timing, alternative, or counterfactual fields, the UI shows them as unavailable instead of deriving them from board rows.
+            This view uses the enterprise audit payload first because it carries the counterfactual fields, calibrated Preventable Runs, and best-alternative context. The lower-level pitching audit summary is used only as a fallback.
           </p>
         </div>
         <div className="game-picker">
@@ -2032,7 +2081,17 @@ function TripleAModule({ team, candidates }: { team: Team; candidates: TripleACo
   );
 }
 
-function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"; team?: string; limit?: number }) {
+function useRunSavingBoard({
+  league,
+  team,
+  year,
+  limit,
+}: {
+  league: "mlb" | "triple_a";
+  team?: string;
+  year?: string;
+  limit?: number;
+}) {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [payload, setPayload] = useState<RunSavingBoardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -2041,7 +2100,7 @@ function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"
     setLoadState("loading");
     setError(null);
     try {
-      const data = await fetchRunSavingBoard({ league, team, limit });
+      const data = await fetchRunSavingBoard({ league, team, year, limit });
       setPayload(data);
       setLoadState("ready");
     } catch (caught) {
@@ -2052,7 +2111,7 @@ function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"
         setLoadState("error");
       }
     }
-  }, [league, team, limit]);
+  }, [league, team, year, limit]);
 
   useEffect(() => {
     void load();
@@ -2074,7 +2133,7 @@ export default function App() {
   const [recapSettings, setRecapSettings] = useState<PitchingRecapSettings | null>(null);
 
   const selectedTeam = MLB_TEAMS.find((team) => team.abbr === selectedTeamAbbr) ?? MLB_TEAMS[0];
-  const { loadState, payload, error, reload } = useRunSavingBoard({ league: "mlb", team: selectedTeam.abbr, limit: 40 });
+  const { loadState, payload, error, reload } = useRunSavingBoard({ league: "mlb", team: selectedTeam.abbr, year: auditYear, limit: 40 });
   const { payload: tripleAPayload, reload: reloadTripleA } = useRunSavingBoard({ league: "triple_a", limit: 80 });
   const apiBase = getConfiguredApiBase();
 
@@ -2170,7 +2229,7 @@ export default function App() {
       case "matrix":
         return <MatrixModule decisions={decisions} bullpenOptions={bullpenOptions} />;
       case "audit":
-        return <AuditModule auditSummary={auditSummary} auditYear={auditYear} onAuditYearChange={setAuditYear} />;
+        return <AuditModule audits={audits} auditSummary={auditSummary} auditYear={auditYear} onAuditYearChange={setAuditYear} />;
       case "recaps":
         return (
           <RecapsModule

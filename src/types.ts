@@ -73,6 +73,8 @@ export type BullpenOption = {
   pitchesLast3Days?: number | null;
   appearancesLast3Days?: number | null;
   rss: number | null;
+  rssLabel?: string | null;
+  rssHasMeasurement?: boolean | null;
   rssSource?: string | null;
   matchupFit: number | null;
   usageCost: number | null;
@@ -148,6 +150,7 @@ export type RunSavingSummary = {
     bullpenOptions?: number;
     bullpenOptionsWithRole?: number;
     bullpenOptionsWithManagerAvailability?: number;
+    bullpenOptionsWithRss?: number;
     bullpenOptionsWithExplicitRss?: number;
     auditRows?: number;
     tripleAConversionCandidates?: number;
@@ -218,6 +221,14 @@ export type PitcherGameLog = {
   managerAvailabilityStatus?: string | null;
   managerAvailabilitySource?: string | null;
   workloadSource?: string | null;
+  rssScore?: number | null;
+  rssLabel?: string | null;
+  rssHasMeasurement?: boolean | null;
+  rssTriggerLevel?: string | null;
+  rssTriggerInning?: number | null;
+  rssTriggerPitchCount?: number | null;
+  rssActualExitPitchCount?: number | null;
+  rssSource?: string | null;
   sourceStatus?: Record<string, SourceStatus>;
   pitchWindows: number;
   maxPitchCount: number;
@@ -269,6 +280,7 @@ export type PitcherProfilesPayload = {
     officialAppearanceCount?: number;
     officialReliefAppearanceCount?: number;
     workloadFactCount?: number;
+    rssSignalCount?: number;
     calibrationWindowCount?: number | null;
   };
   profiles: PitcherProfile[];
@@ -292,6 +304,14 @@ export type EnterpriseAppearanceFact = {
   officialPitchCount: number | null;
   earnedRuns?: number | null;
   runs?: number | null;
+  rssScore?: number | null;
+  rssLabel?: string | null;
+  rssHasMeasurement?: boolean | null;
+  rssTriggerLevel?: string | null;
+  rssTriggerInning?: number | null;
+  rssTriggerPitchCount?: number | null;
+  rssActualExitPitchCount?: number | null;
+  rssSource?: string | null;
   sourceStatus?: Record<string, SourceStatus>;
 };
 
@@ -326,6 +346,7 @@ export type EnterpriseAppearancesPayload = {
     appearanceCount: number;
     reliefAppearanceCount: number;
     workloadFactCount: number;
+    rssSignalCount?: number;
     sourceGameCount?: number | null;
     sourceStatus?: Record<string, SourceStatus>;
   };
