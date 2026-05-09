@@ -8,14 +8,14 @@ The product is a `Run Saving Tool`.
 
 Primary user promise:
 
-> Make a club a little smarter about pitcher allocation decisions by quantifying expected runs saved from pitcher deployment choices.
+> Make a club a little smarter about pitcher allocation decisions by identifying defensible preventable run risk in pitcher deployment choices.
 
 ## Core User Workflows
 
-1. Review today's highest-value run-saving pitcher decisions.
+1. Review today's highest-value preventable-run pitcher decisions.
 2. Inspect a pitcher trajectory to see whether he is decaying, stabilizing, or recovering.
 3. Compare the current starter to available bullpen alternatives.
-4. Audit yesterday's pitcher changes and quantify runs saved or leaked.
+4. Audit yesterday's pitcher changes and quantify preventable run risk.
 5. Identify Triple-A short-window arms who may be useful MLB relief conversion candidates.
 6. Generate a daily team brief.
 
@@ -38,15 +38,15 @@ Use continuous dynamic decay, not hard bucket identities.
 Good:
 
 - `Current trajectory: Settling/recovering, 72% confidence`
-- `Projected runs saved: +0.42`
-- `Hold starter: relief alternative does not clear run-saving threshold`
+- `Projected preventable runs: +0.42`
+- `Hold starter: relief alternative does not clear preventable-run threshold`
 - `Prepare bullpen: cliff probability rising over next pocket`
 
 Avoid:
 
 - `This pitcher is definitely a settler`
 - `Always pull after inning 3`
-- `Guaranteed run savings`
+- `Guaranteed run prevention`
 
 ## Triple-A Language
 
@@ -120,5 +120,6 @@ Current scope:
 - Real pitcher decision windows from pitching audit artifacts.
 - Real top bullpen alternative from the existing bullpen option artifact.
 - Real postgame audit cases from delayed hook, missed hook, justified stay, and bullpen-thin windows.
-- `Projected Runs Saved` remains pending until calibrated.
+- `Projected Preventable Runs` is calibrated from comparable historical artifact windows when sample size is sufficient.
+- `Model Implied Preventable Runs` remains available separately for auditability.
 - Triple-A conversion candidates remain empty until the translation layer is built.

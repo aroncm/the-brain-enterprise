@@ -215,7 +215,7 @@ function OpportunityCard({
         </div>
         <div className="opportunity-metrics">
           <div className="metric-cell">
-            <span className="label">Projected Runs Saved</span>
+            <span className="label">Projected Preventable Runs</span>
             <RunsValue value={decision.projectedRunsSaved} />
           </div>
           <div className="metric-cell">
@@ -317,7 +317,7 @@ function PostgamePanel({ audits }: { audits: AuditRow[] }) {
     <section className="panel-card panel-card--cream">
       <p className="eyebrow">Accountability</p>
       <h3>Postgame Decision Evidence</h3>
-      <p className="panel-sub">Recent staff moves measured against projected and realized outcomes.</p>
+      <p className="panel-sub">Recent staff moves measured against projected preventable run risk and realized outcomes.</p>
       {audits.length === 0 ? (
         <EmptyState
           title="No postgame evidence yet"
@@ -329,7 +329,7 @@ function PostgamePanel({ audits }: { audits: AuditRow[] }) {
             <span>Game</span>
             <span>Decision</span>
             <span>Timing</span>
-            <span>Runs Saved</span>
+            <span>Preventable Runs</span>
             <span>Outcome Note</span>
           </div>
           {audits.map((a) => (
@@ -343,7 +343,7 @@ function PostgamePanel({ audits }: { audits: AuditRow[] }) {
               <div data-label="Timing">
                 <span className={timingPillClass(a.timing)}>{a.timing}</span>
               </div>
-              <div className={`cell ${a.projectedRunsSaved == null ? "awaiting" : ""}`} data-label="Runs Saved">
+              <div className={`cell ${a.projectedRunsSaved == null ? "awaiting" : ""}`} data-label="Preventable Runs">
                 {formatRuns(a.projectedRunsSaved)}
               </div>
               <div className="cell" style={{ fontFamily: "Newsreader, serif", fontStyle: "italic", fontWeight: 500 }} data-label="Outcome">
@@ -435,7 +435,7 @@ function ModelView({ decision }: { decision: PitcherDecision | null }) {
         <h3>Pull decisions are 162-game resource decisions.</h3>
         <p>
           The recommendation combines pitcher degradation state, trajectory forecast, the quality of available
-          relief, and the rest-of-game bullpen cost — before assigning expected runs saved.
+          relief, and the rest-of-game bullpen cost — before assigning projected preventable runs.
         </p>
         <p className="principle-note">Stuff Score &middot; Adjusted Leverage &middot; Bullpen Cost</p>
       </aside>

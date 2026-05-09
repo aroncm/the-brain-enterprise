@@ -11,10 +11,10 @@ Baseball brAIn helps clubs make incrementally better pitcher allocation decision
 Core metric:
 
 ```text
-Projected Runs Saved
+Projected Preventable Runs
 ```
 
-Everything in the UI should ladder into run prevention:
+Everything in the UI should ladder into preventable run risk:
 
 - Starter degradation.
 - Dynamic decay trajectory.
@@ -50,7 +50,7 @@ This endpoint is a local backend adapter over existing pitching artifacts. It re
 
 Important current limitation:
 
-- True `Projected Runs Saved` is intentionally returned as `null` until the calibration layer is built.
+- `Projected Preventable Runs` is a counterfactual opportunity estimate, not official realized runs prevented.
 - Dynamic trajectory metrics are intentionally returned as `null` until the trajectory feature layer is built.
 - Triple-A conversion candidates intentionally return an empty list until the Triple-A to MLB translation layer is built.
 
