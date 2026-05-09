@@ -1207,6 +1207,11 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
           <p className="lede">
             Select any pitcher who has appeared for the club this season. Each profile rolls game-level degradation windows into season-to-date run-prevention intelligence.
           </p>
+          {profilesPayload?.summary ? (
+            <p className="source-note">
+              Official appearances: {profilesPayload.summary.officialAppearanceCount ?? UNAVAILABLE} · relief appearances: {profilesPayload.summary.officialReliefAppearanceCount ?? UNAVAILABLE} · workload facts: {profilesPayload.summary.workloadFactCount ?? UNAVAILABLE}
+            </p>
+          ) : null}
         </div>
         <div className="game-picker">
           <label htmlFor="pitcher-select">Pitcher</label>
@@ -1239,6 +1244,8 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
               <span>Pitch Windows <strong>{selected.pitchWindows}</strong></span>
               <span>Pull Now Games <strong>{selected.pullNowGames}</strong></span>
               <span>Avg Degradation <strong>{formatScore(selected.avgDegradation, 2)}</strong></span>
+              <span>Relief Apps <strong>{selected.workloadSummary?.reliefAppearances ?? 0}</strong></span>
+              <span>Multi-Inning Relief <strong>{selected.workloadSummary?.multiInningReliefAppearances ?? 0}</strong></span>
             </div>
           </article>
           <article className="profile-reading-card">
@@ -1306,9 +1313,10 @@ function confirmedReliefProfiles(profilesPayload: PitcherProfilesPayload | null,
   return profiles.filter((profile) => {
     const name = normalizedName(profile.pitcher);
     const knownAlternative = Array.from(knownReliefNames).some((known) => name.includes(known) || known.includes(name));
+    const officialReliefAppearances = profile.workloadSummary?.reliefAppearances ?? profile.roleCounts?.Reliever ?? 0;
     const officialReliever = profile.primaryRole === "Reliever" && profile.roleSource === "statsapi_official_boxscore_pitching_order";
-    const mixedWithRelief = profile.primaryRole === "Mixed" && (profile.roleCounts?.Reliever ?? 0) > 0;
-    return knownAlternative || officialReliever || mixedWithRelief;
+    const mixedWithRelief = profile.primaryRole === "Mixed" && officialReliefAppearances > 0;
+    return officialReliefAppearances > 0 && (knownAlternative || officialReliever || mixedWithRelief);
   });
 }
 
@@ -1333,17 +1341,23 @@ function confirmedReliefProfile(profile: PitcherProfile, auditCases: AuditCase[]
 }
 
 function reliefProfileOfficialFacts(profile: PitcherProfile) {
+  const workload = profile.workloadSummary;
   const reliefGames = profile.gameLog.filter((game) => game.role === "Reliever");
   const multiInningRelief = reliefGames.filter((game) => (game.officialInningsPitched ?? 0) >= 2);
   const avgReliefIp = average(reliefGames.map((game) => game.officialInningsPitched));
   const avgReliefPitches = average(reliefGames.map((game) => game.officialPitchCount));
   const distressGames = reliefGames.filter((game) => String(game.peakStatus || "").toUpperCase().includes("PULL") || (game.maxDegradation ?? 0) >= 1.15);
   return {
-    reliefGames: reliefGames.length,
-    multiInningRelief: multiInningRelief.length,
-    avgReliefIp,
-    avgReliefPitches,
+    reliefGames: workload?.reliefAppearances ?? reliefGames.length,
+    multiInningRelief: workload?.multiInningReliefAppearances ?? multiInningRelief.length,
+    backToBack: workload?.backToBackAppearances ?? reliefGames.filter((game) => game.backToBack).length,
+    avgReliefIp: workload?.avgReliefInnings ?? avgReliefIp,
+    avgReliefPitches: workload?.avgReliefPitches ?? avgReliefPitches,
+    avgDaysRest: workload?.avgDaysRest ?? average(reliefGames.map((game) => game.daysRestBeforeAppearance)),
+    avgPitchesLast3Days: workload?.avgPitchesLast3Days ?? average(reliefGames.map((game) => game.pitchesLast3Days)),
+    maxPitchesLast3Days: workload?.maxPitchesLast3Days ?? Math.max(...reliefGames.map((game) => game.pitchesLast3Days ?? 0), 0),
     distressGames: distressGames.length,
+    workloadSource: workload?.workloadSource ?? "statsapi_official_boxscore_appearance_history",
   };
 }
 
@@ -1460,9 +1474,9 @@ function BullpenModule({
                 <span>Official Relief Games</span>
                 <span>Multi-Inning Relief</span>
                 <span>Avg Relief Load</span>
+                <span>Rest / Recent Load</span>
                 <span>Model Distress Games</span>
                 <span>Appearances</span>
-                <span>Pitch Windows</span>
                 <span>Preventable Runs</span>
               </div>
               {confirmedProfiles.map((relief) => {
@@ -1480,9 +1494,14 @@ function BullpenModule({
                     <div className="cell" data-label="Official Relief Games">{facts.reliefGames}</div>
                     <div className="cell" data-label="Multi-Inning Relief">{facts.multiInningRelief}</div>
                     <div className="cell" data-label="Avg Relief Load">{formatScore(facts.avgReliefIp, 2)} IP · {formatScore(facts.avgReliefPitches, 0)} pitches</div>
+                    <div className="cell" data-label="Rest / Recent Load">
+                      {facts.avgDaysRest == null ? UNAVAILABLE : `${formatScore(facts.avgDaysRest, 1)} days rest`}
+                      <small>
+                        {facts.avgPitchesLast3Days == null ? UNAVAILABLE : `${formatScore(facts.avgPitchesLast3Days, 0)} pitches`} avg last 3 days · {facts.backToBack} B2B
+                      </small>
+                    </div>
                     <div className="cell" data-label="Model Distress Games">{facts.distressGames}</div>
                     <div className="cell" data-label="Appearances">{relief.profile.appearances}</div>
-                    <div className="cell" data-label="Pitch Windows">{relief.profile.pitchWindows}</div>
                     <div className="cell" data-label="Preventable Runs">{formatRuns(relief.profile.projectedRunsSaved)}</div>
                   </div>
                 );

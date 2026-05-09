@@ -1,4 +1,5 @@
 import type {
+  EnterpriseAppearancesPayload,
   EnterpriseGamesPayload,
   PitcherProfilesPayload,
   PitchingAuditSummaryPayload,
@@ -86,6 +87,16 @@ export function fetchPitcherProfiles(query: RunSavingBoardQuery & { year?: strin
   if (query.year) params.set("year", query.year);
   if (query.limit != null) params.set("limit", String(query.limit));
   return fetchJson<PitcherProfilesPayload>(`/v1/enterprise/run-saving/pitcher-profiles?${params.toString()}`);
+}
+
+export function fetchEnterpriseAppearances(query: RunSavingBoardQuery & { year?: string } = {}): Promise<EnterpriseAppearancesPayload> {
+  const params = new URLSearchParams();
+  params.set("league", query.league ?? "mlb");
+  if (query.team) params.set("team", query.team);
+  if (query.year) params.set("year", query.year);
+  if (query.date) params.set("date", query.date);
+  if (query.limit != null) params.set("limit", String(query.limit));
+  return fetchJson<EnterpriseAppearancesPayload>(`/v1/enterprise/run-saving/appearances?${params.toString()}`);
 }
 
 export function fetchPitchingAuditSummary(

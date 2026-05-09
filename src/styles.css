@@ -535,7 +535,7 @@ button {
 .bullpen-head,
 .audit-head {
   display: grid;
-  grid-template-columns: 1.4fr 0.9fr 1fr 0.8fr 0.8fr 0.9fr;
+  grid-template-columns: 1.25fr 0.75fr 0.9fr 1.15fr 1.2fr 0.75fr 0.75fr 0.75fr;
   gap: 12px;
   padding: 10px 14px;
   background: var(--navy-900);
@@ -554,7 +554,7 @@ button {
 .bullpen-row,
 .audit-row {
   display: grid;
-  grid-template-columns: 1.4fr 0.9fr 1fr 0.8fr 0.8fr 0.9fr;
+  grid-template-columns: 1.25fr 0.75fr 0.9fr 1.15fr 1.2fr 0.75fr 0.75fr 0.75fr;
   gap: 12px;
   padding: 14px;
   background: var(--card);
@@ -620,9 +620,18 @@ button {
   line-height: 1.45;
 }
 
+.source-note {
+  margin-top: 10px;
+  color: var(--ink-muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .bullpen-table--season .bullpen-head,
 .bullpen-row--wide {
-  grid-template-columns: 1.1fr 0.8fr 0.85fr 0.75fr 0.9fr 1.4fr 1fr;
+  grid-template-columns: 1.15fr 1fr 0.75fr 0.75fr 0.95fr 1.2fr 0.8fr 0.85fr;
 }
 
 .bullpen-table--season .bullpen-row .name {

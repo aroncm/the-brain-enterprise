@@ -206,6 +206,19 @@ export type PitcherGameLog = {
   officialInningsPitchedText?: string | null;
   officialInningsPitched?: number | null;
   officialPitchCount?: number | null;
+  earnedRuns?: number | null;
+  runs?: number | null;
+  daysRestBeforeAppearance?: number | null;
+  pitchesLast3Days?: number | null;
+  appearancesLast3Days?: number | null;
+  inningsLast3Days?: number | null;
+  backToBack?: boolean | null;
+  multiInningRelief?: boolean | null;
+  managerAvailabilityProbability?: number | null;
+  managerAvailabilityStatus?: string | null;
+  managerAvailabilitySource?: string | null;
+  workloadSource?: string | null;
+  sourceStatus?: Record<string, SourceStatus>;
   pitchWindows: number;
   maxPitchCount: number;
   peakStatus: string;
@@ -213,6 +226,18 @@ export type PitcherGameLog = {
   avgDegradation: number | null;
   stuffCurve: number[];
   projectedRunsSaved: number | null;
+};
+
+export type PitcherWorkloadSummary = {
+  reliefAppearances: number;
+  multiInningReliefAppearances: number;
+  backToBackAppearances: number;
+  avgReliefInnings: number | null;
+  avgReliefPitches: number | null;
+  avgDaysRest: number | null;
+  avgPitchesLast3Days: number | null;
+  maxPitchesLast3Days: number | null;
+  workloadSource: string;
 };
 
 export type PitcherProfile = {
@@ -229,6 +254,7 @@ export type PitcherProfile = {
   pullNowGames: number;
   prepOrWatchGames: number;
   projectedRunsSaved: number | null;
+  workloadSummary?: PitcherWorkloadSummary;
   gameLog: PitcherGameLog[];
 };
 
@@ -240,9 +266,71 @@ export type PitcherProfilesPayload = {
     year?: string | null;
     profileCount: number;
     gameCount: number;
+    officialAppearanceCount?: number;
+    officialReliefAppearanceCount?: number;
+    workloadFactCount?: number;
     calibrationWindowCount?: number | null;
   };
   profiles: PitcherProfile[];
+};
+
+export type EnterpriseAppearanceFact = {
+  id: string;
+  gameId: string;
+  date: string;
+  matchup: string;
+  team: string;
+  opponent: string;
+  pitcherId: string;
+  pitcher: string;
+  role: string | null;
+  roleSource: string;
+  roleStatus: string;
+  teamAppearanceOrder: number | null;
+  officialInningsPitchedText: string | null;
+  officialInningsPitched: number | null;
+  officialPitchCount: number | null;
+  earnedRuns?: number | null;
+  runs?: number | null;
+  sourceStatus?: Record<string, SourceStatus>;
+};
+
+export type RelieverWorkloadFact = {
+  id: string;
+  gameId: string;
+  date: string;
+  team: string;
+  pitcherId: string;
+  pitcher: string;
+  daysRestBeforeAppearance: number | null;
+  pitchesLast3Days: number;
+  appearancesLast3Days: number;
+  inningsLast3Days: number;
+  backToBack: boolean;
+  multiInningRelief: boolean;
+  managerAvailabilityProbability: number | null;
+  managerAvailabilityStatus: string | null;
+  managerAvailabilitySource: string | null;
+  workloadSource: string;
+  sourceStatus?: Record<string, SourceStatus>;
+};
+
+export type EnterpriseAppearancesPayload = {
+  summary: {
+    generatedAt: string | null;
+    league: "mlb" | "triple_a";
+    team?: string | null;
+    year?: string | null;
+    date?: string | null;
+    gameCount: number;
+    appearanceCount: number;
+    reliefAppearanceCount: number;
+    workloadFactCount: number;
+    sourceGameCount?: number | null;
+    sourceStatus?: Record<string, SourceStatus>;
+  };
+  appearances: EnterpriseAppearanceFact[];
+  relieverWorkload: RelieverWorkloadFact[];
 };
 
 export type PitchingReplayEntry = {
