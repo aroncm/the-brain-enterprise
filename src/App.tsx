@@ -39,7 +39,7 @@ type Team = {
   division: string;
 };
 
-const AWAITING = "Awaiting calibrated value";
+const UNAVAILABLE = "Unavailable";
 
 const MLB_TEAM_IDS: Record<string, number> = {
   ARI: 109,
@@ -137,18 +137,18 @@ const MODULES: Array<{ id: ActiveModule; label: string; short: string }> = [
 ];
 
 function formatRuns(value: number | null | undefined): string {
-  if (value == null) return AWAITING;
+  if (value == null) return UNAVAILABLE;
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}`;
 }
 
 function formatScore(value: number | null | undefined, digits = 2): string {
-  if (value == null) return AWAITING;
+  if (value == null) return UNAVAILABLE;
   return value.toFixed(digits);
 }
 
 function formatPercent(value: number | null | undefined): string {
-  if (value == null) return AWAITING;
+  if (value == null) return UNAVAILABLE;
   return `${Math.round(value * 100)}%`;
 }
 
@@ -319,7 +319,7 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 }
 
 function RunsValue({ value }: { value: number | null | undefined }) {
-  if (value == null) return <span className="value value--awaiting">Awaiting calibrated value</span>;
+  if (value == null) return <span className="value value--awaiting">{UNAVAILABLE}</span>;
   const sign = value > 0 ? "+" : "";
   const cls = value > 0 ? "positive" : value < 0 ? "negative" : "";
   return <span className={`value ${cls}`}>{`${sign}${value.toFixed(2)}`}</span>;
@@ -481,7 +481,7 @@ function opportunityClass(rec: string): string {
 
 function starterRiskLabel(decision: PitcherDecision): string {
   const p = decision.cliffProbability;
-  if (p == null) return AWAITING;
+  if (p == null) return UNAVAILABLE;
   if (p >= 0.66) return "Elevated";
   if (p >= 0.33) return "Watch";
   return "Contained";
@@ -641,7 +641,7 @@ function OpportunityCard({ decision, reliefName }: { decision: PitcherDecision; 
           <div className="metric-cell">
             <span className="label">Best Relief Alternative</span>
             <span className={`value ${reliefName ? "text-value" : "value--awaiting"}`}>
-              {reliefName ?? "Awaiting calibrated value"}
+              {reliefName ?? UNAVAILABLE}
             </span>
           </div>
         </div>
@@ -848,7 +848,7 @@ function OverviewModule({
           <p className="eyebrow">Projected vs Raw Model</p>
           <h3>Calibration layer.</h3>
           <p>
-            Raw model is the direct starter-vs-reliever next-window run impact. Projected Preventable Runs applies comparable historical calibration by status, degradation band, leverage band, inning band, and decision-delta band when enough samples exist. If no comparable bucket exists, projected equals model-implied.
+            Raw model is the direct starter-vs-reliever next-window run impact. Preventable Runs is a model-estimated counterfactual opportunity, not an official run-prevention stat. When the API lacks a comparable calibration bucket or source metadata, the interface must label the value as model-only or unavailable rather than treating it as observed fact.
           </p>
           <div className="brief-facts">
             <span>Board preventable runs: {formatRuns(snapshotProjected)}</span>
@@ -1213,7 +1213,7 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
             <h3>{selected.pitcher}</h3>
             <div className="profile-metrics profile-metrics--wide">
               <span>Preventable Runs <strong>{formatRuns(selected.projectedRunsSaved)}</strong></span>
-              <span>Preventable / Game <strong>{selected.appearances > 0 ? formatRuns((selected.projectedRunsSaved ?? 0) / selected.appearances) : AWAITING}</strong></span>
+              <span>Preventable / Game <strong>{selected.appearances > 0 ? formatRuns((selected.projectedRunsSaved ?? 0) / selected.appearances) : UNAVAILABLE}</strong></span>
               <span>Appearances <strong>{selected.appearances}</strong></span>
               <span>Pitch Windows <strong>{selected.pitchWindows}</strong></span>
               <span>Pull Now Games <strong>{selected.pullNowGames}</strong></span>
@@ -1224,7 +1224,7 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
             <p className="eyebrow">How to read this pitcher</p>
             <h3>{selected.pitcher} is ranked by allocation opportunity, not realized performance.</h3>
             <p>
-              Preventable Runs sums the calibrated model windows attached to this pitcher&apos;s games. A high number means the model repeatedly found defensible run-risk that may have been preventable through different pitcher allocation. It should prompt drill-down into the game log and replay, not be read as official runs prevented or a talent-only rating.
+              Preventable Runs sums model-estimated counterfactual windows attached to this pitcher&apos;s games. A high number means the model repeatedly found defensible run-risk that may have been preventable through different pitcher allocation. It should prompt drill-down into the game log and replay, not be read as official runs prevented, official WAR, or a talent-only rating.
             </p>
             <div className="brief-facts">
               <span>Peak degradation: {formatScore(selected.maxDegradation, 2)}</span>
@@ -1266,55 +1266,27 @@ function normalizedName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function inferredReliefProfiles(profilesPayload: PitcherProfilesPayload | null, options: BullpenOption[], auditCases: AuditCase[]): PitcherProfile[] {
+function confirmedReliefProfiles(profilesPayload: PitcherProfilesPayload | null, options: BullpenOption[], auditCases: AuditCase[]): PitcherProfile[] {
   const profiles = profilesPayload?.profiles ?? [];
+  const unavailableAlternatives = new Set(["", "unavailable", "no relief alternative recorded", "none", "n/a"]);
   const knownReliefNames = new Set(
     [
       ...options.filter((option) => !String(option.role || "").toLowerCase().includes("starter")).map((option) => option.name),
       ...auditCases.map((audit) => audit.bestAlternative),
     ]
       .map(normalizedName)
-      .filter(Boolean),
+      .filter((name) => !unavailableAlternatives.has(name)),
   );
   return profiles.filter((profile) => {
     const name = normalizedName(profile.pitcher);
-    const knownReliefAlternative = Array.from(knownReliefNames).some((known) => name.includes(known) || known.includes(name));
-    const startsLikeStarter = profile.gameLog.filter((game) => game.maxPitchCount >= 55 || (game.innings?.[0] ?? 99) <= 2).length;
-    const reliefLikeOutings = profile.gameLog.filter((game) => game.maxPitchCount <= 45 && (game.innings?.[0] ?? 99) >= 4).length;
-    const mostlyStarter = startsLikeStarter >= Math.max(1, Math.ceil(profile.gameLog.length * 0.4));
-    return knownReliefAlternative || (reliefLikeOutings >= 3 && !mostlyStarter);
+    return Array.from(knownReliefNames).some((known) => name.includes(known) || known.includes(name));
   });
 }
 
-type ReliefWorkloadProfile = {
+type ConfirmedReliefProfile = {
   profile: PitcherProfile;
-  multiInningOutings: number;
-  cleanMultiInningOutings: number;
-  distressMultiInningOutings: number;
-  cleanRate: number | null;
-  avgMultiInningPitches: number | null;
-  avgMultiInningDegradation: number | null;
-  trustLabel: string;
-  useCase: string;
   matchedAuditCases: AuditCase[];
 };
-
-function isMultiInningReliefGame(game: PitcherProfile["gameLog"][number]): boolean {
-  const uniqueInnings = new Set((game.innings ?? []).filter((inning) => typeof inning === "number"));
-  return uniqueInnings.size >= 2 || game.maxPitchCount >= 28;
-}
-
-function reliefGameDistressed(game: PitcherProfile["gameLog"][number]): boolean {
-  const peak = String(game.peakStatus || "").toUpperCase();
-  return peak.includes("PULL") || peak.includes("DISTRESS") || (game.maxDegradation ?? 0) >= 1.15;
-}
-
-function reliefUseCase(trustLabel: string): string {
-  if (trustLabel === "2-inning trust") return "Use as the first clean bridge when the starter is fading before leverage peaks.";
-  if (trustLabel === "Bridge candidate") return "Use for a planned pocket or 4-6 out bridge when matchup fit is strong.";
-  if (trustLabel === "One-inning preferred") return "Keep to one inning unless the game state or rest constraints force length.";
-  return "Sample is not strong enough to treat him as a multi-inning answer yet.";
-}
 
 function pitcherNameMatches(a: string, b: string): boolean {
   const left = a.toLowerCase().trim();
@@ -1323,32 +1295,10 @@ function pitcherNameMatches(a: string, b: string): boolean {
   return left.includes(right) || right.includes(left);
 }
 
-function reliefWorkloadProfile(profile: PitcherProfile, auditCases: AuditCase[]): ReliefWorkloadProfile {
-  const multiInningGames = profile.gameLog.filter(isMultiInningReliefGame);
-  const cleanMultiInningGames = multiInningGames.filter((game) => !reliefGameDistressed(game));
-  const distressMultiInningGames = multiInningGames.filter(reliefGameDistressed);
-  const cleanRate = multiInningGames.length > 0 ? cleanMultiInningGames.length / multiInningGames.length : null;
-  const avgMultiInningPitches = average(multiInningGames.map((game) => game.maxPitchCount));
-  const avgMultiInningDegradation = average(multiInningGames.map((game) => game.avgDegradation ?? game.maxDegradation));
+function confirmedReliefProfile(profile: PitcherProfile, auditCases: AuditCase[]): ConfirmedReliefProfile {
   const matchedAuditCases = auditCases.filter((audit) => pitcherNameMatches(profile.pitcher, audit.bestAlternative));
-  let trustLabel = "Insufficient sample";
-  if (multiInningGames.length >= 2 && (cleanRate ?? 0) >= 0.67 && (avgMultiInningDegradation ?? 0) < 0.9) {
-    trustLabel = "2-inning trust";
-  } else if (multiInningGames.length >= 1 && (cleanRate ?? 0) >= 0.5) {
-    trustLabel = "Bridge candidate";
-  } else if (multiInningGames.length >= 1) {
-    trustLabel = "One-inning preferred";
-  }
   return {
     profile,
-    multiInningOutings: multiInningGames.length,
-    cleanMultiInningOutings: cleanMultiInningGames.length,
-    distressMultiInningOutings: distressMultiInningGames.length,
-    cleanRate,
-    avgMultiInningPitches,
-    avgMultiInningDegradation,
-    trustLabel,
-    useCase: reliefUseCase(trustLabel),
     matchedAuditCases,
   };
 }
@@ -1363,16 +1313,12 @@ function BullpenModule({
   auditSummary: PitchingAuditSummaryPayload | null;
 }) {
   const auditCases = useMemo(() => auditCasesFromSummary(auditSummary), [auditSummary]);
-  const reliefProfiles = useMemo(() => inferredReliefProfiles(profilesPayload, options, auditCases), [profilesPayload, options, auditCases]);
-  const workloadProfiles = useMemo(
+  const reliefProfiles = useMemo(() => confirmedReliefProfiles(profilesPayload, options, auditCases), [profilesPayload, options, auditCases]);
+  const confirmedProfiles = useMemo(
     () =>
       reliefProfiles
-        .map((profile) => reliefWorkloadProfile(profile, auditCases))
-        .sort((a, b) => {
-          const aScore = (a.cleanRate ?? 0) * 100 + a.multiInningOutings * 4 - a.distressMultiInningOutings * 8 + a.matchedAuditCases.length * 3;
-          const bScore = (b.cleanRate ?? 0) * 100 + b.multiInningOutings * 4 - b.distressMultiInningOutings * 8 + b.matchedAuditCases.length * 3;
-          return bScore - aScore;
-        }),
+        .map((profile) => confirmedReliefProfile(profile, auditCases))
+        .sort((a, b) => b.matchedAuditCases.length - a.matchedAuditCases.length || b.profile.appearances - a.profile.appearances),
     [reliefProfiles, auditCases],
   );
   return (
@@ -1382,7 +1328,7 @@ function BullpenModule({
           <p className="eyebrow">Relief Alternatives</p>
           <h2>Who can cover length, and when the change made sense.</h2>
           <p className="lede">
-            Read this as the bridge from starter degradation to bullpen deployment. This page intentionally excludes starters unless they were explicitly recorded as a bullpen alternative; starter-to-relief conversion belongs on the Triple-A/role-conversion surface.
+            Read this as the bridge from starter degradation to bullpen deployment. This page only displays named relief alternatives returned by the decision/audit feeds. It does not infer relief roles from pitch count or usage shape.
           </p>
         </div>
       </div>
@@ -1390,13 +1336,13 @@ function BullpenModule({
       <div className="bullpen-explainer">
         <div>
           <span className="eyebrow eyebrow--gold">How to read it</span>
-          <strong>Multi-inning trust is earned by clean length.</strong>
-          <p>A clean multi-inning outing means the reliever covered at least two innings, or roughly 28+ pitches, without a Pull Now/distress peak or severe degradation. This is a proxy until the backend exposes explicit rest and availability feeds.</p>
+          <strong>Confirmed alternatives only.</strong>
+          <p>If the API does not expose a named reliever, explicit role, RSS value, or availability status, the field is shown as unavailable. The UI should not manufacture bullpen reliability from usage heuristics.</p>
         </div>
         <div>
           <span className="eyebrow eyebrow--gold">Decision use</span>
-          <strong>Matched opportunities show where that arm was a recorded alternative.</strong>
-          <p>Those are the audit cases to open when asking: “Should we have gone to this reliever instead of pushing the starter?”</p>
+          <strong>Matched opportunities show where that arm was recorded.</strong>
+          <p>Use those cases to inspect whether a named alternative was available and whether the model recommended changing pitchers at that specific game state.</p>
         </div>
       </div>
 
@@ -1424,10 +1370,13 @@ function BullpenModule({
                 <div className="bullpen-row" key={option.id}>
                   <div>
                     <div className="name">{option.name}</div>
-                    <div className="sub">RSS {formatScore(option.rss)}</div>
+                    <div className="sub">
+                      RSS {formatScore(option.rss)}
+                      {option.rssSource === "unavailable" ? " · source unavailable" : ""}
+                    </div>
                   </div>
-                  <div className="cell" data-label="Role">{option.role}</div>
-                  <div className="cell" data-label="Availability">{option.availability}</div>
+                  <div className="cell" data-label="Role">{option.role || UNAVAILABLE}</div>
+                  <div className="cell" data-label="Availability">{option.availability || UNAVAILABLE}</div>
                   <div className={`cell ${option.matchupFit == null ? "awaiting" : ""}`} data-label="Matchup Fit">{formatPercent(option.matchupFit)}</div>
                   <div className={`cell ${option.usageCost == null ? "awaiting" : ""}`} data-label="Usage Cost">{formatScore(option.usageCost)}</div>
                   <div className={`cell ${option.netOptionScore == null ? "awaiting" : ""}`} data-label="Net Option">{formatScore(option.netOptionScore)}</div>
@@ -1440,38 +1389,38 @@ function BullpenModule({
         <div>
           <div className="section-heading section-heading--compact">
             <div>
-              <p className="eyebrow eyebrow--navy">Season Multi-Inning Reliability</p>
-              <h2>Which relievers can cover length without distress.</h2>
+              <p className="eyebrow eyebrow--navy">Confirmed Relief Profiles</p>
+              <h2>Season profile for named alternatives.</h2>
             </div>
           </div>
-          {workloadProfiles.length === 0 ? (
-            <EmptyState title="No confirmed relief profiles loaded" detail="The bullpen page now excludes inferred starters. It will populate from relievers attached to audit alternatives or repeated relief-like season appearances." />
+          {confirmedProfiles.length === 0 ? (
+            <EmptyState title="No confirmed relief profiles loaded" detail="No named bullpen alternatives matched the season profile feed. The page is intentionally not inferring reliever status from usage patterns." />
           ) : (
             <div className="bullpen-table bullpen-table--season">
               <div className="bullpen-head">
                 <span>Pitcher</span>
-                <span>Length Signal</span>
-                <span>Clean Multi-Inning</span>
-                <span>Distress In Length</span>
-                <span>Avg Length Load</span>
-                <span>When To Use</span>
                 <span>Matched Opportunities</span>
+                <span>Appearances</span>
+                <span>Pitch Windows</span>
+                <span>Pull Now Games</span>
+                <span>Avg Degradation</span>
+                <span>Preventable Runs</span>
               </div>
-              {workloadProfiles.map((relief) => (
+              {confirmedProfiles.map((relief) => (
                 <div className="bullpen-row bullpen-row--wide" key={relief.profile.pitcherId || relief.profile.pitcher}>
                   <div>
                     <div className="name">{relief.profile.pitcher}</div>
-                    <div className="sub">{relief.profile.team} · {relief.profile.appearances} appearances · {relief.profile.pitchWindows} windows</div>
+                    <div className="sub">{relief.profile.team} · profile matched from named alternative feed</div>
                   </div>
-                  <div className="cell" data-label="Length Signal"><strong>{relief.trustLabel}</strong></div>
-                  <div className="cell" data-label="Clean Multi-Inning">{relief.cleanMultiInningOutings}/{relief.multiInningOutings} {relief.cleanRate == null ? "" : `(${formatPercent(relief.cleanRate)})`}</div>
-                  <div className="cell" data-label="Distress In Length">{relief.distressMultiInningOutings}</div>
-                  <div className="cell" data-label="Avg Length Load">{formatScore(relief.avgMultiInningPitches, 0)} pitches · deg {formatScore(relief.avgMultiInningDegradation, 2)}</div>
-                  <div className="cell bullpen-use-case" data-label="When To Use">{relief.useCase}</div>
                   <div className="cell" data-label="Matched Opportunities">
                     <strong>{relief.matchedAuditCases.length}</strong>
                     {relief.matchedAuditCases[0] ? <small>{relief.matchedAuditCases[0].game} · {relief.matchedAuditCases[0].pitcher}</small> : <small>No recorded alternative cases</small>}
                   </div>
+                  <div className="cell" data-label="Appearances">{relief.profile.appearances}</div>
+                  <div className="cell" data-label="Pitch Windows">{relief.profile.pitchWindows}</div>
+                  <div className="cell" data-label="Pull Now Games">{relief.profile.pullNowGames}</div>
+                  <div className="cell" data-label="Avg Degradation">{formatScore(relief.profile.avgDegradation, 2)}</div>
+                  <div className="cell" data-label="Preventable Runs">{formatRuns(relief.profile.projectedRunsSaved)}</div>
                 </div>
               ))}
             </div>
@@ -1508,7 +1457,7 @@ function MatrixModule({ decisions, bullpenOptions }: { decisions: PitcherDecisio
           <p className="eyebrow">Deployment Matrix</p>
           <h2>Starter value × bullpen alternative.</h2>
           <p className="lede">
-            This synthesizes the room&apos;s core question: is the decayed starter still the best available option for the innings needed?
+            This is a model-classified operating view, not a factual role chart. Use Postgame Audit for the underlying recorded cases and unavailable fields.
           </p>
         </div>
       </div>
@@ -1623,7 +1572,7 @@ function auditCaseFromWindow(row: PitchingAuditWindow, bucket: string, index: nu
   const inning = auditString(row, ["inning"], auditString(starter, ["inning"], "Inning pending"));
   const status = auditString(row, ["status"], auditString(recommendation, ["status"], bucket));
   const actualOutcome = auditString(row, ["actual_outcome", "actualDecision", "actual_decision"], "");
-  const actualDecision = actualOutcome ? normalizeReason(actualOutcome) : bucket === "Justified Stay" ? "Stayed with starter" : "Decision pending";
+  const actualDecision = actualOutcome ? normalizeReason(actualOutcome) : "Unavailable in audit artifact";
   const recommendedDecision =
     status.toUpperCase() === "PULL_NOW" || bucket === "Missed Hook" || bucket === "Delayed Change"
       ? "Change pitcher"
@@ -1640,43 +1589,14 @@ function auditCaseFromWindow(row: PitchingAuditWindow, bucket: string, index: nu
     leverageIndex: auditNumber(row, ["leverage_index"]) ?? auditNumber(starter, ["leverage_index"]),
     actualDecision,
     recommendedDecision,
-    bestAlternative: auditString(topCandidate, ["player_name", "name"], "No relief alternative recorded"),
+    bestAlternative: auditString(topCandidate, ["player_name", "name"], UNAVAILABLE),
     projectedRunsSaved: auditNumber(row, ["projected_runs_saved", "estimated_runs_saved", "runs_saved"]),
     estimatedWinProbabilityDelta: auditNumber(row, ["estimated_win_probability_delta", "win_probability_delta"]),
     note: auditString(row, ["note", "outcome_note"], "No outcome note recorded."),
-    counterfactualSummary: auditString(row, ["counterfactual_summary", "counterfactualSummary"], "Counterfactual pending calibration."),
-    opportunityDescription: auditString(row, ["opportunity_description", "opportunityDescription"], "Opportunity description pending."),
+    counterfactualSummary: auditString(row, ["counterfactual_summary", "counterfactualSummary"], "Counterfactual unavailable in audit artifact."),
+    opportunityDescription: auditString(row, ["opportunity_description", "opportunityDescription"], "Opportunity description unavailable in audit artifact."),
     starterValueNextWindow: auditNumber(row, ["starter_value_next_window", "starterValueNextWindow"]) ?? auditNumber(starter, ["value_next_window"]),
     alternativeValueNextWindow: auditNumber(row, ["alternative_value_next_window", "alternativeValueNextWindow"]) ?? auditNumber(topCandidate, ["net_option_score", "value_next_window"]),
-  };
-}
-
-function auditCaseFromBoardRow(row: AuditRow): AuditCase {
-  const starterValue = row.starterValueNextWindow ?? null;
-  const alternativeValue = row.alternativeValueNextWindow ?? null;
-  const alternativeClears = alternativeValue != null && starterValue != null ? alternativeValue > starterValue : alternativeValue != null && alternativeValue >= 0.45;
-  const starterViable = starterValue != null ? starterValue >= 0.35 : row.timing === "On time";
-  const matrixBucket: MatrixBucket = alternativeClears && !starterViable ? "tandem" : alternativeClears ? "standard" : starterViable ? "push" : "workload";
-  return {
-    id: row.id,
-    bucket: "Enterprise Board",
-    matrixBucket,
-    game: row.game,
-    pitcher: row.pitcher || row.decision,
-    inning: row.inning || "Inning pending",
-    status: row.recommendedDecision || row.decision,
-    timing: row.timing,
-    leverageIndex: row.leverageIndex ?? null,
-    actualDecision: row.actualDecision || "Decision pending",
-    recommendedDecision: row.recommendedDecision || row.decision,
-    bestAlternative: row.bestAlternative || "No relief alternative recorded",
-    projectedRunsSaved: row.projectedRunsSaved,
-    estimatedWinProbabilityDelta: row.estimatedWinProbabilityDelta,
-    note: row.note,
-    counterfactualSummary: row.counterfactualSummary || row.note,
-    opportunityDescription: row.opportunityDescription || "Opportunity description pending.",
-    starterValueNextWindow: row.starterValueNextWindow ?? null,
-    alternativeValueNextWindow: row.alternativeValueNextWindow ?? null,
   };
 }
 
@@ -1691,20 +1611,17 @@ function auditCasesFromSummary(summary: PitchingAuditSummaryPayload | null): Aud
 }
 
 function AuditModule({
-  audits,
   auditSummary,
   auditYear,
   onAuditYearChange,
 }: {
-  audits: AuditRow[];
   auditSummary: PitchingAuditSummaryPayload | null;
   auditYear: string;
   onAuditYearChange: (year: string) => void;
 }) {
   const auditCases = useMemo(() => {
-    const summaryCases = auditCasesFromSummary(auditSummary);
-    return summaryCases.length > 0 ? summaryCases : audits.map(auditCaseFromBoardRow);
-  }, [auditSummary, audits]);
+    return auditCasesFromSummary(auditSummary);
+  }, [auditSummary]);
   const [matrixFilter, setMatrixFilter] = useState<MatrixFilter>("all");
   const [selectedAuditId, setSelectedAuditId] = useState("");
   const matrixCounts = useMemo(
@@ -1741,7 +1658,7 @@ function AuditModule({
           <p className="eyebrow">Postgame Audit</p>
           <h2>Timing, alternative, and counterfactual.</h2>
           <p className="lede">
-            This view reads the full pitching audit summary for the selected club and season, then ties timing to the best recorded bullpen alternative and counterfactual opportunity.
+            This view reads only the full pitching audit summary for the selected club and season. If that artifact does not include timing, alternative, or counterfactual fields, the UI shows them as unavailable instead of deriving them from board rows.
           </p>
         </div>
         <div className="game-picker">
@@ -1758,8 +1675,8 @@ function AuditModule({
           <p className="eyebrow eyebrow--gold">Deployment Matrix Drilldown</p>
           <h3>Start with the decision cell, then inspect the exact cases.</h3>
           <p>
-            The matrix is not a separate report. It is the filter for the audit queue: select a cell to see which games,
-            pitchers, timing decisions, and bullpen alternatives created the optimization opportunity.
+            The matrix is not a separate report. It is the filter for the audited cases: select a cell to see which games,
+            pitchers, timing decisions, and recorded bullpen alternatives created the optimization opportunity.
           </p>
         </div>
         <div className="matrix-filter-grid">
@@ -1783,7 +1700,7 @@ function AuditModule({
           title={auditCases.length === 0 ? "No postgame evidence yet" : "No cases in this matrix cell"}
           detail={
             auditCases.length === 0
-              ? "Completed-game audits will appear once final replay detail is available for the selected club."
+              ? "No full audit summary cases are available for this club/season yet. Board-row fallbacks are intentionally disabled for factual-only reporting."
               : "Select another deployment-matrix cell, or return to All cases, to inspect the available audit queue."
           }
         />
@@ -1826,19 +1743,19 @@ function AuditModule({
             <div className="counterfactual-grid">
               <StatCard label="Recommended Move" value={selected.recommendedDecision || "—"} detail={selected.opportunityDescription || "No recommendation detail recorded."} />
               <StatCard label="Actual Decision" value={selected.actualDecision || "—"} detail={selected.note || "No actual decision note recorded."} />
-              <StatCard label="Best Alternative" value={selected.bestAlternative || "—"} detail="Top bullpen option attached to the model window." />
-              <StatCard label="Projected Preventable Runs" value={formatRuns(selected.projectedRunsSaved)} detail={selected.counterfactualSummary || "Counterfactual detail pending."} />
+              <StatCard label="Best Alternative" value={selected.bestAlternative || UNAVAILABLE} detail="Named bullpen option recorded in the audit artifact." />
+              <StatCard label="Projected Preventable Runs" value={formatRuns(selected.projectedRunsSaved)} detail={`Model counterfactual, not an observed result. ${selected.counterfactualSummary || ""}`.trim()} />
             </div>
 
             <div className="counterfactual-callout">
               <p className="eyebrow eyebrow--gold">Counterfactual</p>
-              <h4>{selected.counterfactualSummary || "Counterfactual pending calibration."}</h4>
+              <h4>{selected.counterfactualSummary || "Counterfactual unavailable in audit artifact."}</h4>
               <p className="counterfactual-question">{matrixBucketQuestion(selected.matrixBucket)}</p>
               <div>
                 <span>Starter next-window value: <strong>{formatScore(selected.starterValueNextWindow, 2)}</strong></span>
                 <span>Alternative next-window value: <strong>{formatScore(selected.alternativeValueNextWindow, 2)}</strong></span>
                 <span>Estimated WP delta: <strong>{formatPercent(selected.estimatedWinProbabilityDelta)}</strong></span>
-                <span>Audit source: <strong>{auditSummary ? "Full summary artifact" : "Enterprise board fallback"}</strong></span>
+                <span>Audit source: <strong>Full summary artifact</strong></span>
               </div>
             </div>
 
@@ -2000,7 +1917,7 @@ function TripleAModule({ team, candidates }: { team: Team; candidates: TripleACo
           <p className="eyebrow">Triple-A Pipeline</p>
           <h2>Short-window conversion candidates.</h2>
           <p className="lede">
-            Identify starters or bulk arms who may create MLB value in shorter relief windows, while controlling for small-sample mirage risk.
+            Identify Triple-A arms whose pitch-level model profile may translate to shorter MLB relief windows. Usage pattern is model-classified from observed appearances unless an official role source is added.
           </p>
         </div>
       </div>
@@ -2020,7 +1937,7 @@ function TripleAModule({ team, candidates }: { team: Team; candidates: TripleACo
                   {candidate.affiliate} · {candidate.parentClub}
                 </div>
               </div>
-              <div className="cell" data-label="Current">{candidate.currentRole} → {candidate.recommendedRole}</div>
+              <div className="cell" data-label="Usage Pattern">{candidate.currentRole} → {candidate.recommendedRole}</div>
               <div className="cell" data-label="Short-window stuff">{candidate.shortWindowStuffPlus}</div>
               <div className="cell" data-label="Conversion">{candidate.reliefConversionScore}</div>
               <div className="cell" data-label="Preventable Runs">{formatRuns(candidate.projectedRunsSaved)}</div>
@@ -2170,7 +2087,7 @@ export default function App() {
       case "matrix":
         return <MatrixModule decisions={decisions} bullpenOptions={bullpenOptions} />;
       case "audit":
-        return <AuditModule audits={audits} auditSummary={auditSummary} auditYear={auditYear} onAuditYearChange={setAuditYear} />;
+        return <AuditModule auditSummary={auditSummary} auditYear={auditYear} onAuditYearChange={setAuditYear} />;
       case "recaps":
         return (
           <RecapsModule

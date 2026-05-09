@@ -54,9 +54,12 @@ export type PitcherDecision = {
 export type BullpenOption = {
   id: string;
   name: string;
-  role: string;
+  role: string | null;
+  roleSource?: string | null;
   availability: string;
+  availabilitySource?: string | null;
   rss: number | null;
+  rssSource?: string | null;
   matchupFit: number | null;
   usageCost: number | null;
   projectedRunsAllowed: number | null;
