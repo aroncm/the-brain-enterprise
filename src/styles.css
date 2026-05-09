@@ -592,8 +592,59 @@ button {
   gap: 24px;
 }
 
+.bullpen-explainer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.bullpen-explainer > div {
+  padding: 18px;
+  border: 1px solid var(--gold-100);
+  border-top: 4px solid var(--gold-500);
+  background: var(--gold-50);
+}
+
+.bullpen-explainer strong {
+  display: block;
+  margin: 8px 0;
+  color: var(--navy-900);
+  font-family: "Newsreader", serif;
+  font-size: 22px;
+}
+
+.bullpen-explainer p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.bullpen-table--season .bullpen-head,
+.bullpen-row--wide {
+  grid-template-columns: 1.1fr 0.8fr 0.85fr 0.75fr 0.9fr 1.4fr 1fr;
+}
+
 .bullpen-table--season .bullpen-row .name {
   font-size: 16px;
+}
+
+.bullpen-use-case {
+  font-family: "Newsreader", serif !important;
+  font-style: italic;
+  font-weight: 500 !important;
+  line-height: 1.35;
+}
+
+.bullpen-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .bullpen-row .cell.awaiting,
@@ -2152,6 +2203,81 @@ button {
   grid-template-columns: 320px minmax(0, 1fr);
 }
 
+.audit-drilldown-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+  align-items: stretch;
+  margin-bottom: 22px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--red-500);
+  background: var(--card);
+}
+
+.audit-drilldown-panel h3 {
+  margin: 8px 0 10px;
+  font-size: 28px;
+}
+
+.audit-drilldown-panel p {
+  color: var(--ink-soft);
+  font-family: "Newsreader", serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.matrix-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.matrix-filter-grid button {
+  min-height: 132px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--gold-500);
+  background: var(--gold-50);
+  color: var(--navy-900);
+  text-align: left;
+  cursor: pointer;
+}
+
+.matrix-filter-grid button:nth-child(2) {
+  border-top-color: var(--red-500);
+  background: #f5e1dd;
+}
+
+.matrix-filter-grid button.active,
+.matrix-filter-grid button:hover {
+  border-color: var(--navy-900);
+  box-shadow: inset 0 0 0 1px var(--navy-900);
+}
+
+.matrix-filter-grid strong,
+.matrix-filter-grid span,
+.matrix-filter-grid small {
+  display: block;
+}
+
+.matrix-filter-grid strong {
+  font-family: "Newsreader", serif;
+  font-size: 30px;
+}
+
+.matrix-filter-grid span {
+  margin-top: 4px;
+  font-weight: 800;
+}
+
+.matrix-filter-grid small {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .audit-hero {
   display: flex;
   align-items: flex-start;
@@ -2162,6 +2288,29 @@ button {
 
 .audit-hero p {
   color: var(--muted);
+}
+
+.audit-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.matrix-case-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid var(--gold-100);
+  border-radius: 999px;
+  background: var(--gold-50);
+  color: var(--navy-900);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .counterfactual-callout {
@@ -2175,6 +2324,15 @@ button {
 .counterfactual-callout h4 {
   margin: 8px 0 14px;
   font-size: 24px;
+}
+
+.counterfactual-question {
+  margin: -4px 0 14px;
+  color: var(--red-500);
+  font-family: "Newsreader", serif;
+  font-size: 16px;
+  font-style: italic;
+  font-weight: 600;
 }
 
 .counterfactual-callout div {
@@ -2362,6 +2520,8 @@ button {
   .mound-replay-grid,
   .replay-decision-grid,
   .audit-layout,
+  .audit-drilldown-panel,
+  .bullpen-explainer,
   .recap-module-grid {
     grid-template-columns: 1fr;
   }
@@ -2376,6 +2536,7 @@ button {
   .pitcher-profile-grid,
   .profile-metrics--wide,
   .recap-summary-grid,
+  .matrix-filter-grid,
   .counterfactual-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2431,6 +2592,9 @@ button {
   .pitch-tunnel-card,
   .profile-metrics--wide,
   .recap-summary-grid,
+  .matrix-filter-grid,
+  .bullpen-explainer,
+  .audit-drilldown-panel,
   .counterfactual-grid,
   .replay-decision-grid,
   .decision-answer-stats,
