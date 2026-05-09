@@ -508,6 +508,11 @@ function profilePerGame(profile: PitcherProfile): number | null {
   return (profile.projectedRunsSaved ?? 0) / profile.appearances;
 }
 
+function coverageLabel(value: number | null | undefined, total: number | null | undefined): string {
+  if (value == null || total == null || total <= 0) return UNAVAILABLE;
+  return `${value}/${total} (${Math.round((value / total) * 100)}%)`;
+}
+
 function rankProfiles(profiles: PitcherProfile[], score: (profile: PitcherProfile) => number | null): PitcherProfile[] {
   return [...profiles].sort((a, b) => (score(b) ?? -Infinity) - (score(a) ?? -Infinity));
 }
@@ -763,6 +768,7 @@ function OverviewModule({
       ? topOpportunity.projectedRunsSaved / seasonProjected
       : null;
   const seasonMatrix = seasonMatrixCounts(auditSummary);
+  const coverage = payload.summary.dataCoverage ?? {};
   const matrixBuckets = {
     standard: decisions.filter((decision) => matrixKey(decision, bestOption) === "standard"),
     tandem: decisions.filter((decision) => matrixKey(decision, bestOption) === "tandem"),
@@ -855,6 +861,20 @@ function OverviewModule({
             <span>Board rows: {decisions.length}</span>
             <span>Top per-game: {topPerGame ? `${topPerGame.pitcher} ${formatRuns(profilePerGame(topPerGame))}` : "—"}</span>
             <span>Source games: {payload.summary.sourceGameCount ?? "—"}</span>
+          </div>
+        </article>
+        <article className="brief-card">
+          <p className="eyebrow">Source Coverage</p>
+          <h3>What is available for this club page.</h3>
+          <p>
+            Coverage distinguishes factual/source-backed fields from model-only fields. Missing or source-incomplete fields are intentionally rendered as unavailable.
+          </p>
+          <div className="brief-facts">
+            <span>Calibrated windows: {coverageLabel(coverage.calibratedPreventableRunWindows, coverage.decisionWindows)}</span>
+            <span>Model windows: {coverage.modelImpliedRunWindows ?? "—"}</span>
+            <span>Relief role coverage: {coverageLabel(coverage.bullpenOptionsWithRole, coverage.bullpenOptions)}</span>
+            <span>Manager availability model: {coverageLabel(coverage.bullpenOptionsWithManagerAvailability, coverage.bullpenOptions)}</span>
+            <span>Explicit RSS: {coverageLabel(coverage.bullpenOptionsWithExplicitRss, coverage.bullpenOptions)}</span>
           </div>
         </article>
       </div>
@@ -1212,6 +1232,7 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
             <span className="eyebrow eyebrow--muted">{selected.team} · season to date</span>
             <h3>{selected.pitcher}</h3>
             <div className="profile-metrics profile-metrics--wide">
+              <span>Role <strong>{selected.primaryRole || UNAVAILABLE}</strong></span>
               <span>Preventable Runs <strong>{formatRuns(selected.projectedRunsSaved)}</strong></span>
               <span>Preventable / Game <strong>{selected.appearances > 0 ? formatRuns((selected.projectedRunsSaved ?? 0) / selected.appearances) : UNAVAILABLE}</strong></span>
               <span>Appearances <strong>{selected.appearances}</strong></span>
@@ -1228,6 +1249,7 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
             </p>
             <div className="brief-facts">
               <span>Peak degradation: {formatScore(selected.maxDegradation, 2)}</span>
+              <span>Role source: {selected.roleSource || UNAVAILABLE}</span>
               <span>Prep/watch games: {selected.prepOrWatchGames}</span>
               <span>Pull now games: {selected.pullNowGames}</span>
               <span>Windows: {selected.pitchWindows}</span>
@@ -1236,7 +1258,9 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
           <div className="game-log-table">
             <div className="game-log-head">
               <span>Game</span>
+              <span>Role</span>
               <span>Peak Signal</span>
+              <span>Official Line</span>
               <span>Pitch Windows</span>
               <span>Max Deg</span>
               <span>Preventable Runs</span>
@@ -1248,7 +1272,9 @@ function PitchersModule({ profilesPayload }: { profilesPayload: PitcherProfilesP
                   <strong>{game.matchup}</strong>
                   <span>{game.date}</span>
                 </div>
+                <span>{game.role || UNAVAILABLE}</span>
                 <span>{statusLabel(game.peakStatus)}</span>
+                <span>{game.officialInningsPitchedText || UNAVAILABLE} IP · {game.officialPitchCount == null ? UNAVAILABLE : `${game.officialPitchCount} pitches`}</span>
                 <span>{game.pitchWindows}</span>
                 <span>{formatScore(game.maxDegradation, 2)}</span>
                 <span>{formatRuns(game.projectedRunsSaved)}</span>
@@ -1279,7 +1305,10 @@ function confirmedReliefProfiles(profilesPayload: PitcherProfilesPayload | null,
   );
   return profiles.filter((profile) => {
     const name = normalizedName(profile.pitcher);
-    return Array.from(knownReliefNames).some((known) => name.includes(known) || known.includes(name));
+    const knownAlternative = Array.from(knownReliefNames).some((known) => name.includes(known) || known.includes(name));
+    const officialReliever = profile.primaryRole === "Reliever" && profile.roleSource === "statsapi_official_boxscore_pitching_order";
+    const mixedWithRelief = profile.primaryRole === "Mixed" && (profile.roleCounts?.Reliever ?? 0) > 0;
+    return knownAlternative || officialReliever || mixedWithRelief;
   });
 }
 
@@ -1300,6 +1329,21 @@ function confirmedReliefProfile(profile: PitcherProfile, auditCases: AuditCase[]
   return {
     profile,
     matchedAuditCases,
+  };
+}
+
+function reliefProfileOfficialFacts(profile: PitcherProfile) {
+  const reliefGames = profile.gameLog.filter((game) => game.role === "Reliever");
+  const multiInningRelief = reliefGames.filter((game) => (game.officialInningsPitched ?? 0) >= 2);
+  const avgReliefIp = average(reliefGames.map((game) => game.officialInningsPitched));
+  const avgReliefPitches = average(reliefGames.map((game) => game.officialPitchCount));
+  const distressGames = reliefGames.filter((game) => String(game.peakStatus || "").toUpperCase().includes("PULL") || (game.maxDegradation ?? 0) >= 1.15);
+  return {
+    reliefGames: reliefGames.length,
+    multiInningRelief: multiInningRelief.length,
+    avgReliefIp,
+    avgReliefPitches,
+    distressGames: distressGames.length,
   };
 }
 
@@ -1328,7 +1372,7 @@ function BullpenModule({
           <p className="eyebrow">Relief Alternatives</p>
           <h2>Who can cover length, and when the change made sense.</h2>
           <p className="lede">
-            Read this as the bridge from starter degradation to bullpen deployment. This page only displays named relief alternatives returned by the decision/audit feeds. It does not infer relief roles from pitch count or usage shape.
+            Read this as the bridge from starter degradation to bullpen deployment. This page uses official game appearance role where available and labels manager availability as a modeled probability until club day-of availability is attached.
           </p>
         </div>
       </div>
@@ -1336,8 +1380,8 @@ function BullpenModule({
       <div className="bullpen-explainer">
         <div>
           <span className="eyebrow eyebrow--gold">How to read it</span>
-          <strong>Confirmed alternatives only.</strong>
-          <p>If the API does not expose a named reliever, explicit role, RSS value, or availability status, the field is shown as unavailable. The UI should not manufacture bullpen reliability from usage heuristics.</p>
+          <strong>Factual role, modeled availability.</strong>
+          <p>Starter/reliever appearance role comes from official boxscore pitching order. Manager availability is a rule-based estimate from rest and recent workload, not official club availability.</p>
         </div>
         <div>
           <span className="eyebrow eyebrow--gold">Decision use</span>
@@ -1361,7 +1405,9 @@ function BullpenModule({
               <div className="bullpen-head">
                 <span>Pitcher</span>
                 <span>Role</span>
-                <span>Availability</span>
+                <span>Roster Availability</span>
+                <span>Manager Availability</span>
+                <span>Rest / Recent Load</span>
                 <span>Matchup Fit</span>
                 <span>Usage Cost</span>
                 <span>Net Option</span>
@@ -1376,7 +1422,18 @@ function BullpenModule({
                     </div>
                   </div>
                   <div className="cell" data-label="Role">{option.role || UNAVAILABLE}</div>
-                  <div className="cell" data-label="Availability">{option.availability || UNAVAILABLE}</div>
+                  <div className="cell" data-label="Roster Availability">{option.availability || UNAVAILABLE}</div>
+                  <div className="cell" data-label="Manager Availability">
+                    {option.managerAvailabilityStatus || UNAVAILABLE}
+                    {option.managerAvailabilityProbability == null ? "" : ` · ${formatPercent(option.managerAvailabilityProbability)}`}
+                    {option.managerAvailabilitySource ? <small>{option.managerAvailabilitySource}</small> : null}
+                  </div>
+                  <div className="cell" data-label="Rest / Recent Load">
+                    {option.daysRest == null ? UNAVAILABLE : `${option.daysRest} days rest`}
+                    <small>
+                      {option.pitchesLast3Days == null ? UNAVAILABLE : `${option.pitchesLast3Days} pitches`} · {option.appearancesLast3Days == null ? UNAVAILABLE : `${option.appearancesLast3Days} apps`} last 3 days
+                    </small>
+                  </div>
                   <div className={`cell ${option.matchupFit == null ? "awaiting" : ""}`} data-label="Matchup Fit">{formatPercent(option.matchupFit)}</div>
                   <div className={`cell ${option.usageCost == null ? "awaiting" : ""}`} data-label="Usage Cost">{formatScore(option.usageCost)}</div>
                   <div className={`cell ${option.netOptionScore == null ? "awaiting" : ""}`} data-label="Net Option">{formatScore(option.netOptionScore)}</div>
@@ -1400,29 +1457,36 @@ function BullpenModule({
               <div className="bullpen-head">
                 <span>Pitcher</span>
                 <span>Matched Opportunities</span>
+                <span>Official Relief Games</span>
+                <span>Multi-Inning Relief</span>
+                <span>Avg Relief Load</span>
+                <span>Model Distress Games</span>
                 <span>Appearances</span>
                 <span>Pitch Windows</span>
-                <span>Pull Now Games</span>
-                <span>Avg Degradation</span>
                 <span>Preventable Runs</span>
               </div>
-              {confirmedProfiles.map((relief) => (
-                <div className="bullpen-row bullpen-row--wide" key={relief.profile.pitcherId || relief.profile.pitcher}>
-                  <div>
-                    <div className="name">{relief.profile.pitcher}</div>
-                    <div className="sub">{relief.profile.team} · profile matched from named alternative feed</div>
+              {confirmedProfiles.map((relief) => {
+                const facts = reliefProfileOfficialFacts(relief.profile);
+                return (
+                  <div className="bullpen-row bullpen-row--wide" key={relief.profile.pitcherId || relief.profile.pitcher}>
+                    <div>
+                      <div className="name">{relief.profile.pitcher}</div>
+                      <div className="sub">{relief.profile.team} · {relief.profile.primaryRole || UNAVAILABLE} · {relief.profile.roleSource || UNAVAILABLE}</div>
+                    </div>
+                    <div className="cell" data-label="Matched Opportunities">
+                      <strong>{relief.matchedAuditCases.length}</strong>
+                      {relief.matchedAuditCases[0] ? <small>{relief.matchedAuditCases[0].game} · {relief.matchedAuditCases[0].pitcher}</small> : <small>No recorded alternative cases</small>}
+                    </div>
+                    <div className="cell" data-label="Official Relief Games">{facts.reliefGames}</div>
+                    <div className="cell" data-label="Multi-Inning Relief">{facts.multiInningRelief}</div>
+                    <div className="cell" data-label="Avg Relief Load">{formatScore(facts.avgReliefIp, 2)} IP · {formatScore(facts.avgReliefPitches, 0)} pitches</div>
+                    <div className="cell" data-label="Model Distress Games">{facts.distressGames}</div>
+                    <div className="cell" data-label="Appearances">{relief.profile.appearances}</div>
+                    <div className="cell" data-label="Pitch Windows">{relief.profile.pitchWindows}</div>
+                    <div className="cell" data-label="Preventable Runs">{formatRuns(relief.profile.projectedRunsSaved)}</div>
                   </div>
-                  <div className="cell" data-label="Matched Opportunities">
-                    <strong>{relief.matchedAuditCases.length}</strong>
-                    {relief.matchedAuditCases[0] ? <small>{relief.matchedAuditCases[0].game} · {relief.matchedAuditCases[0].pitcher}</small> : <small>No recorded alternative cases</small>}
-                  </div>
-                  <div className="cell" data-label="Appearances">{relief.profile.appearances}</div>
-                  <div className="cell" data-label="Pitch Windows">{relief.profile.pitchWindows}</div>
-                  <div className="cell" data-label="Pull Now Games">{relief.profile.pullNowGames}</div>
-                  <div className="cell" data-label="Avg Degradation">{formatScore(relief.profile.avgDegradation, 2)}</div>
-                  <div className="cell" data-label="Preventable Runs">{formatRuns(relief.profile.projectedRunsSaved)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

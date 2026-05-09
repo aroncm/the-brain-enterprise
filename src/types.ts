@@ -12,6 +12,13 @@ export type Recommendation =
   | "Planned tandem"
   | "Monitor only";
 
+export type SourceStatus = {
+  available: boolean;
+  source: string;
+  status: string;
+  notes?: string;
+};
+
 export type PitcherDecision = {
   id: string;
   team: string;
@@ -49,6 +56,7 @@ export type PitcherDecision = {
   calibrationSampleCount?: number | null;
   calibrationFactor?: number | null;
   calibrationSource?: string | null;
+  sourceStatus?: Record<string, SourceStatus>;
 };
 
 export type BullpenOption = {
@@ -58,12 +66,19 @@ export type BullpenOption = {
   roleSource?: string | null;
   availability: string;
   availabilitySource?: string | null;
+  managerAvailabilityProbability?: number | null;
+  managerAvailabilityStatus?: string | null;
+  managerAvailabilitySource?: string | null;
+  daysRest?: number | null;
+  pitchesLast3Days?: number | null;
+  appearancesLast3Days?: number | null;
   rss: number | null;
   rssSource?: string | null;
   matchupFit: number | null;
   usageCost: number | null;
   projectedRunsAllowed: number | null;
   netOptionScore: number | null;
+  sourceStatus?: Record<string, SourceStatus>;
 };
 
 export type AuditRow = {
@@ -93,6 +108,7 @@ export type AuditRow = {
   calibrationSampleCount?: number | null;
   calibrationFactor?: number | null;
   note: string;
+  sourceStatus?: Record<string, SourceStatus>;
 };
 
 export type TripleAConversionCandidate = {
@@ -125,6 +141,17 @@ export type RunSavingSummary = {
   sourceGameCount: number | null;
   calibrationWindowCount?: number | null;
   calibrationBucketCount?: number | null;
+  dataCoverage?: {
+    decisionWindows?: number;
+    calibratedPreventableRunWindows?: number;
+    modelImpliedRunWindows?: number;
+    bullpenOptions?: number;
+    bullpenOptionsWithRole?: number;
+    bullpenOptionsWithManagerAvailability?: number;
+    bullpenOptionsWithExplicitRss?: number;
+    auditRows?: number;
+    tripleAConversionCandidates?: number;
+  };
 };
 
 export type RunSavingBoardPayload = {
@@ -172,6 +199,13 @@ export type PitcherGameLog = {
   matchup: string;
   opponent: string;
   innings: number[];
+  role?: string | null;
+  roleSource?: string | null;
+  roleStatus?: string | null;
+  teamAppearanceOrder?: number | null;
+  officialInningsPitchedText?: string | null;
+  officialInningsPitched?: number | null;
+  officialPitchCount?: number | null;
   pitchWindows: number;
   maxPitchCount: number;
   peakStatus: string;
@@ -185,6 +219,9 @@ export type PitcherProfile = {
   pitcherId?: string | null;
   pitcher: string;
   team: string;
+  primaryRole?: string | null;
+  roleSource?: string | null;
+  roleCounts?: Record<string, number>;
   appearances: number;
   pitchWindows: number;
   maxDegradation: number | null;
