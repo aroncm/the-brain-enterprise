@@ -120,6 +120,5 @@ Current scope:
 - Real pitcher decision windows from pitching audit artifacts.
 - Real top bullpen alternative from the existing bullpen option artifact.
 - Real postgame audit cases from delayed hook, missed hook, justified stay, and bullpen-thin windows.
-- `Projected Preventable Runs` is calibrated from comparable historical artifact windows when sample size is sufficient.
-- `Model Implied Preventable Runs` remains available separately for auditability.
+- `Projected Preventable Runs` is calibrated when comparable historical windows exist.
 - Triple-A conversion candidates remain empty until the translation layer is built.

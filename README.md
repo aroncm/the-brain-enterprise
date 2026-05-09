@@ -51,8 +51,8 @@ This endpoint is a local backend adapter over existing pitching artifacts. It re
 Important current limitation:
 
 - `Projected Preventable Runs` is a counterfactual opportunity estimate, not official realized runs prevented.
-- Dynamic trajectory metrics are intentionally returned as `null` until the trajectory feature layer is built.
-- Triple-A conversion candidates intentionally return an empty list until the Triple-A to MLB translation layer is built.
+- Dynamic trajectory metrics depend on finalized pitch-level replay artifacts.
+- Triple-A conversion candidates depend on available Triple-A replay coverage and should be presented with sample-risk context.
 
 Existing artifact endpoints reused by the adapter:
 
