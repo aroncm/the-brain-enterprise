@@ -40,7 +40,6 @@ type Team = {
 };
 
 const AWAITING = "Awaiting calibrated value";
-const UNAVAILABLE = "Unavailable";
 
 const MLB_TEAM_IDS: Record<string, number> = {
   ARI: 109,
@@ -1430,13 +1429,6 @@ type AuditCase = {
   actualDecision: string;
   recommendedDecision: string;
   bestAlternative: string;
-  modelWindowPitchCount: number | null;
-  actualReplacementPitcher: string | null;
-  actualChangePitchCount: number | null;
-  actualChangeAfterPitches: number | null;
-  actualChangeAfterBatters: number | null;
-  actualChangeWithinNextPocket: boolean | null;
-  actualRunsAfter: number | null;
   projectedRunsSaved: number | null;
   estimatedWinProbabilityDelta: number | null;
   note: string;
@@ -1503,14 +1495,7 @@ function auditCaseFromWindow(row: PitchingAuditWindow, bucket: string, index: nu
     leverageIndex: auditNumber(row, ["leverage_index"]) ?? auditNumber(starter, ["leverage_index"]),
     actualDecision,
     recommendedDecision,
-    bestAlternative: auditString(topCandidate, ["player_name", "name"], UNAVAILABLE),
-    modelWindowPitchCount: null,
-    actualReplacementPitcher: null,
-    actualChangePitchCount: null,
-    actualChangeAfterPitches: null,
-    actualChangeAfterBatters: null,
-    actualChangeWithinNextPocket: null,
-    actualRunsAfter: null,
+    bestAlternative: auditString(topCandidate, ["player_name", "name"], "No relief alternative recorded"),
     projectedRunsSaved: auditNumber(row, ["projected_runs_saved", "estimated_runs_saved", "runs_saved"]),
     estimatedWinProbabilityDelta: auditNumber(row, ["estimated_win_probability_delta", "win_probability_delta"]),
     note: auditString(row, ["note", "outcome_note"], "No outcome note recorded."),
@@ -1531,21 +1516,14 @@ function auditCaseFromBoardRow(row: AuditRow): AuditCase {
     status: row.recommendedDecision || row.decision,
     timing: row.timing,
     leverageIndex: row.leverageIndex ?? null,
-    actualDecision: row.actualDecision || "Unavailable",
-    recommendedDecision: row.recommendedDecision || "Unavailable",
-    bestAlternative: row.bestAlternative || UNAVAILABLE,
-    modelWindowPitchCount: row.modelWindowPitchCount ?? null,
-    actualReplacementPitcher: row.actualReplacementPitcher ?? null,
-    actualChangePitchCount: row.actualChangePitchCount ?? null,
-    actualChangeAfterPitches: row.actualChangeAfterPitches ?? null,
-    actualChangeAfterBatters: row.actualChangeAfterBatters ?? null,
-    actualChangeWithinNextPocket: row.actualChangeWithinNextPocket ?? null,
-    actualRunsAfter: row.runsAfterModelWindow ?? row.actualRunsAfter ?? null,
-    projectedRunsSaved: row.projectedRunsSaved ?? row.modelImpliedRunsSaved ?? null,
-    estimatedWinProbabilityDelta: row.estimatedWinProbabilityDelta ?? null,
-    note: row.note || "",
-    counterfactualSummary: row.counterfactualSummary || "Counterfactual unavailable in enterprise audit payload.",
-    opportunityDescription: row.opportunityDescription || "",
+    actualDecision: row.actualDecision || "Decision pending",
+    recommendedDecision: row.recommendedDecision || row.decision,
+    bestAlternative: row.bestAlternative || "No relief alternative recorded",
+    projectedRunsSaved: row.projectedRunsSaved,
+    estimatedWinProbabilityDelta: row.estimatedWinProbabilityDelta,
+    note: row.note,
+    counterfactualSummary: row.counterfactualSummary || row.note,
+    opportunityDescription: row.opportunityDescription || "Opportunity description pending.",
     starterValueNextWindow: row.starterValueNextWindow ?? null,
     alternativeValueNextWindow: row.alternativeValueNextWindow ?? null,
   };
@@ -1561,30 +1539,6 @@ function auditCasesFromSummary(summary: PitchingAuditSummaryPayload | null): Aud
   ];
 }
 
-function auditCasesFromEnterpriseRows(audits: AuditRow[]): AuditCase[] {
-  return audits.map(auditCaseFromBoardRow);
-}
-
-function auditActualDetail(audit: AuditCase): string {
-  const parts: string[] = [];
-  if (audit.actualReplacementPitcher) parts.push(`Replacement: ${audit.actualReplacementPitcher}`);
-  if (audit.actualChangeAfterPitches != null) parts.push(`${audit.actualChangeAfterPitches} pitches after model window`);
-  if (audit.actualChangeAfterBatters != null) parts.push(`${audit.actualChangeAfterBatters} batters after model window`);
-  if (audit.actualRunsAfter != null) parts.push(`${audit.actualRunsAfter} runs after model window`);
-  if (audit.actualChangeWithinNextPocket != null) {
-    parts.push(audit.actualChangeWithinNextPocket ? "Changed within next pocket" : "Not changed within next pocket");
-  }
-  return parts.length > 0 ? parts.join(" · ") : audit.note || "No actual decision detail recorded.";
-}
-
-function auditTimingDetail(audit: AuditCase): string {
-  const parts: string[] = [];
-  if (audit.modelWindowPitchCount != null) parts.push(`Model window PC ${audit.modelWindowPitchCount}`);
-  if (audit.actualChangePitchCount != null) parts.push(`Actual change PC ${audit.actualChangePitchCount}`);
-  if (audit.actualChangeAfterPitches != null) parts.push(`Lead time ${audit.actualChangeAfterPitches} pitches`);
-  return parts.length > 0 ? parts.join(" · ") : "Pitch-level timing unavailable.";
-}
-
 function AuditModule({
   audits,
   auditSummary,
@@ -1597,7 +1551,8 @@ function AuditModule({
   onAuditYearChange: (year: string) => void;
 }) {
   const auditCases = useMemo(() => {
-    return audits.length > 0 ? auditCasesFromEnterpriseRows(audits) : auditCasesFromSummary(auditSummary);
+    const summaryCases = auditCasesFromSummary(auditSummary);
+    return summaryCases.length > 0 ? summaryCases : audits.map(auditCaseFromBoardRow);
   }, [auditSummary, audits]);
   const [selectedAuditId, setSelectedAuditId] = useState("");
   useEffect(() => {
@@ -1668,10 +1623,9 @@ function AuditModule({
 
             <div className="counterfactual-grid">
               <StatCard label="Recommended Move" value={selected.recommendedDecision || "—"} detail={selected.opportunityDescription || "No recommendation detail recorded."} />
-              <StatCard label="Actual Decision" value={selected.actualDecision || "—"} detail={auditActualDetail(selected)} />
-              <StatCard label="Timing Evidence" value={selected.actualChangePitchCount == null ? UNAVAILABLE : `PC ${selected.actualChangePitchCount}`} detail={auditTimingDetail(selected)} />
-              <StatCard label="Best Alternative" value={selected.bestAlternative || UNAVAILABLE} detail="Named bullpen option recorded in the audit artifact; not club-confirmed availability unless the source says so." />
-              <StatCard label="Projected Preventable Runs" value={formatRuns(selected.projectedRunsSaved)} detail={`Model counterfactual, not an observed result. ${selected.counterfactualSummary || ""}`.trim()} />
+              <StatCard label="Actual Decision" value={selected.actualDecision || "—"} detail={selected.note || "No actual decision note recorded."} />
+              <StatCard label="Best Alternative" value={selected.bestAlternative || "—"} detail="Top bullpen option attached to the model window." />
+              <StatCard label="Projected Preventable Runs" value={formatRuns(selected.projectedRunsSaved)} detail={selected.counterfactualSummary || "Counterfactual detail pending."} />
             </div>
 
             <div className="counterfactual-callout">
@@ -1680,7 +1634,6 @@ function AuditModule({
               <div>
                 <span>Starter next-window value: <strong>{formatScore(selected.starterValueNextWindow, 2)}</strong></span>
                 <span>Alternative next-window value: <strong>{formatScore(selected.alternativeValueNextWindow, 2)}</strong></span>
-                <span>Runs after model window: <strong>{formatScore(selected.actualRunsAfter, 0)}</strong></span>
                 <span>Estimated WP delta: <strong>{formatPercent(selected.estimatedWinProbabilityDelta)}</strong></span>
                 <span>Audit source: <strong>{auditSummary ? "Full summary artifact" : "Enterprise board fallback"}</strong></span>
               </div>
@@ -1876,17 +1829,7 @@ function TripleAModule({ team, candidates }: { team: Team; candidates: TripleACo
   );
 }
 
-function useRunSavingBoard({
-  league,
-  team,
-  year,
-  limit,
-}: {
-  league: "mlb" | "triple_a";
-  team?: string;
-  year?: string;
-  limit?: number;
-}) {
+function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"; team?: string; limit?: number }) {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [payload, setPayload] = useState<RunSavingBoardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1895,7 +1838,7 @@ function useRunSavingBoard({
     setLoadState("loading");
     setError(null);
     try {
-      const data = await fetchRunSavingBoard({ league, team, year, limit });
+      const data = await fetchRunSavingBoard({ league, team, limit });
       setPayload(data);
       setLoadState("ready");
     } catch (caught) {
@@ -1906,7 +1849,7 @@ function useRunSavingBoard({
         setLoadState("error");
       }
     }
-  }, [league, team, year, limit]);
+  }, [league, team, limit]);
 
   useEffect(() => {
     void load();
@@ -1928,8 +1871,8 @@ export default function App() {
   const [recapSettings, setRecapSettings] = useState<PitchingRecapSettings | null>(null);
 
   const selectedTeam = MLB_TEAMS.find((team) => team.abbr === selectedTeamAbbr) ?? MLB_TEAMS[0];
-  const { loadState, payload, error, reload } = useRunSavingBoard({ league: "mlb", team: selectedTeam.abbr, year: auditYear, limit: 40 });
-  const { payload: tripleAPayload, reload: reloadTripleA } = useRunSavingBoard({ league: "triple_a", year: auditYear, limit: 80 });
+  const { loadState, payload, error, reload } = useRunSavingBoard({ league: "mlb", team: selectedTeam.abbr, limit: 40 });
+  const { payload: tripleAPayload, reload: reloadTripleA } = useRunSavingBoard({ league: "triple_a", limit: 80 });
   const apiBase = getConfiguredApiBase();
 
   const decisions = payload?.decisions ?? [];
