@@ -12,6 +12,13 @@ export type Recommendation =
   | "Planned tandem"
   | "Monitor only";
 
+export type SourceStatus = {
+  source?: string | null;
+  status?: "official" | "model" | "derived" | "proxy" | "unavailable" | string | null;
+  detail?: string | null;
+  updatedAt?: string | null;
+};
+
 export type PitcherDecision = {
   id: string;
   team: string;
@@ -76,6 +83,18 @@ export type AuditRow = {
   actualDecision?: string | null;
   recommendedDecision?: string | null;
   bestAlternative?: string | null;
+  modelWindowPitchId?: string | null;
+  modelWindowPitchCount?: number | null;
+  modelWindowInning?: string | null;
+  actualReplacementPitcherId?: string | null;
+  actualReplacementPitcher?: string | null;
+  actualChangePitchId?: string | null;
+  actualChangeInning?: string | null;
+  actualChangePitchCount?: number | null;
+  actualReplacementFirstPitchCount?: number | null;
+  actualChangeAfterPitches?: number | null;
+  actualChangeAfterBatters?: number | null;
+  actualChangeWithinNextPocket?: boolean | null;
   opportunityDescription?: string | null;
   counterfactualSummary?: string | null;
   starterValueNextWindow?: number | null;
@@ -87,6 +106,9 @@ export type AuditRow = {
   estimatedWinProbabilityDelta: number | null;
   realizedDelayTax: number | null;
   actualRunsAfter: number | null;
+  runsAfterModelWindow?: number | null;
+  runsAfterModelWindowSource?: string | null;
+  sourceStatus?: Record<string, SourceStatus>;
   calibrationSampleCount?: number | null;
   calibrationFactor?: number | null;
   note: string;
@@ -224,6 +246,7 @@ export type PitchingReplayEntry = {
     pz?: number | null;
     pitch_type?: string | null;
     release_speed?: number | null;
+    sourceStatus?: Record<string, SourceStatus>;
     starter_state: {
       pitch_count_in_game: number;
       official_pitch_count_in_game?: number | null;
@@ -242,6 +265,7 @@ export type PitchingReplayEntry = {
       ball_rate_10?: number | null;
       pitch_mix_drift_10?: number | null;
       degradation_score: number;
+      sourceStatus?: Record<string, SourceStatus>;
     };
   };
   recommendation: {
@@ -281,6 +305,7 @@ export type PitchingReplayResponse = {
     prep_count: number;
     pull_now_count: number;
     actual_changes_within_next_pocket: number;
+    sourceStatus?: Record<string, SourceStatus>;
   };
   entries: PitchingReplayEntry[];
 };
