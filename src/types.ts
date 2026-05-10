@@ -12,13 +12,6 @@ export type Recommendation =
   | "Planned tandem"
   | "Monitor only";
 
-export type SourceStatus = {
-  available: boolean;
-  source: string;
-  status: string;
-  notes?: string;
-};
-
 export type PitcherDecision = {
   id: string;
   team: string;
@@ -56,31 +49,18 @@ export type PitcherDecision = {
   calibrationSampleCount?: number | null;
   calibrationFactor?: number | null;
   calibrationSource?: string | null;
-  sourceStatus?: Record<string, SourceStatus>;
 };
 
 export type BullpenOption = {
   id: string;
   name: string;
-  role: string | null;
-  roleSource?: string | null;
+  role: string;
   availability: string;
-  availabilitySource?: string | null;
-  managerAvailabilityProbability?: number | null;
-  managerAvailabilityStatus?: string | null;
-  managerAvailabilitySource?: string | null;
-  daysRest?: number | null;
-  pitchesLast3Days?: number | null;
-  appearancesLast3Days?: number | null;
   rss: number | null;
-  rssLabel?: string | null;
-  rssHasMeasurement?: boolean | null;
-  rssSource?: string | null;
   matchupFit: number | null;
   usageCost: number | null;
   projectedRunsAllowed: number | null;
   netOptionScore: number | null;
-  sourceStatus?: Record<string, SourceStatus>;
 };
 
 export type AuditRow = {
@@ -110,7 +90,6 @@ export type AuditRow = {
   calibrationSampleCount?: number | null;
   calibrationFactor?: number | null;
   note: string;
-  sourceStatus?: Record<string, SourceStatus>;
 };
 
 export type TripleAConversionCandidate = {
@@ -143,18 +122,6 @@ export type RunSavingSummary = {
   sourceGameCount: number | null;
   calibrationWindowCount?: number | null;
   calibrationBucketCount?: number | null;
-  dataCoverage?: {
-    decisionWindows?: number;
-    calibratedPreventableRunWindows?: number;
-    modelImpliedRunWindows?: number;
-    bullpenOptions?: number;
-    bullpenOptionsWithRole?: number;
-    bullpenOptionsWithManagerAvailability?: number;
-    bullpenOptionsWithRss?: number;
-    bullpenOptionsWithExplicitRss?: number;
-    auditRows?: number;
-    tripleAConversionCandidates?: number;
-  };
 };
 
 export type RunSavingBoardPayload = {
@@ -202,34 +169,6 @@ export type PitcherGameLog = {
   matchup: string;
   opponent: string;
   innings: number[];
-  role?: string | null;
-  roleSource?: string | null;
-  roleStatus?: string | null;
-  teamAppearanceOrder?: number | null;
-  officialInningsPitchedText?: string | null;
-  officialInningsPitched?: number | null;
-  officialPitchCount?: number | null;
-  earnedRuns?: number | null;
-  runs?: number | null;
-  daysRestBeforeAppearance?: number | null;
-  pitchesLast3Days?: number | null;
-  appearancesLast3Days?: number | null;
-  inningsLast3Days?: number | null;
-  backToBack?: boolean | null;
-  multiInningRelief?: boolean | null;
-  managerAvailabilityProbability?: number | null;
-  managerAvailabilityStatus?: string | null;
-  managerAvailabilitySource?: string | null;
-  workloadSource?: string | null;
-  rssScore?: number | null;
-  rssLabel?: string | null;
-  rssHasMeasurement?: boolean | null;
-  rssTriggerLevel?: string | null;
-  rssTriggerInning?: number | null;
-  rssTriggerPitchCount?: number | null;
-  rssActualExitPitchCount?: number | null;
-  rssSource?: string | null;
-  sourceStatus?: Record<string, SourceStatus>;
   pitchWindows: number;
   maxPitchCount: number;
   peakStatus: string;
@@ -239,25 +178,10 @@ export type PitcherGameLog = {
   projectedRunsSaved: number | null;
 };
 
-export type PitcherWorkloadSummary = {
-  reliefAppearances: number;
-  multiInningReliefAppearances: number;
-  backToBackAppearances: number;
-  avgReliefInnings: number | null;
-  avgReliefPitches: number | null;
-  avgDaysRest: number | null;
-  avgPitchesLast3Days: number | null;
-  maxPitchesLast3Days: number | null;
-  workloadSource: string;
-};
-
 export type PitcherProfile = {
   pitcherId?: string | null;
   pitcher: string;
   team: string;
-  primaryRole?: string | null;
-  roleSource?: string | null;
-  roleCounts?: Record<string, number>;
   appearances: number;
   pitchWindows: number;
   maxDegradation: number | null;
@@ -265,7 +189,6 @@ export type PitcherProfile = {
   pullNowGames: number;
   prepOrWatchGames: number;
   projectedRunsSaved: number | null;
-  workloadSummary?: PitcherWorkloadSummary;
   gameLog: PitcherGameLog[];
 };
 
@@ -277,81 +200,9 @@ export type PitcherProfilesPayload = {
     year?: string | null;
     profileCount: number;
     gameCount: number;
-    officialAppearanceCount?: number;
-    officialReliefAppearanceCount?: number;
-    workloadFactCount?: number;
-    rssSignalCount?: number;
     calibrationWindowCount?: number | null;
   };
   profiles: PitcherProfile[];
-};
-
-export type EnterpriseAppearanceFact = {
-  id: string;
-  gameId: string;
-  date: string;
-  matchup: string;
-  team: string;
-  opponent: string;
-  pitcherId: string;
-  pitcher: string;
-  role: string | null;
-  roleSource: string;
-  roleStatus: string;
-  teamAppearanceOrder: number | null;
-  officialInningsPitchedText: string | null;
-  officialInningsPitched: number | null;
-  officialPitchCount: number | null;
-  earnedRuns?: number | null;
-  runs?: number | null;
-  rssScore?: number | null;
-  rssLabel?: string | null;
-  rssHasMeasurement?: boolean | null;
-  rssTriggerLevel?: string | null;
-  rssTriggerInning?: number | null;
-  rssTriggerPitchCount?: number | null;
-  rssActualExitPitchCount?: number | null;
-  rssSource?: string | null;
-  sourceStatus?: Record<string, SourceStatus>;
-};
-
-export type RelieverWorkloadFact = {
-  id: string;
-  gameId: string;
-  date: string;
-  team: string;
-  pitcherId: string;
-  pitcher: string;
-  daysRestBeforeAppearance: number | null;
-  pitchesLast3Days: number;
-  appearancesLast3Days: number;
-  inningsLast3Days: number;
-  backToBack: boolean;
-  multiInningRelief: boolean;
-  managerAvailabilityProbability: number | null;
-  managerAvailabilityStatus: string | null;
-  managerAvailabilitySource: string | null;
-  workloadSource: string;
-  sourceStatus?: Record<string, SourceStatus>;
-};
-
-export type EnterpriseAppearancesPayload = {
-  summary: {
-    generatedAt: string | null;
-    league: "mlb" | "triple_a";
-    team?: string | null;
-    year?: string | null;
-    date?: string | null;
-    gameCount: number;
-    appearanceCount: number;
-    reliefAppearanceCount: number;
-    workloadFactCount: number;
-    rssSignalCount?: number;
-    sourceGameCount?: number | null;
-    sourceStatus?: Record<string, SourceStatus>;
-  };
-  appearances: EnterpriseAppearanceFact[];
-  relieverWorkload: RelieverWorkloadFact[];
 };
 
 export type PitchingReplayEntry = {
