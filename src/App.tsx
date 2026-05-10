@@ -30,7 +30,8 @@ import type {
 } from "./types";
 
 type LoadState = "loading" | "ready" | "error" | "missing-config";
-type ActiveModule = "overview" | "replay" | "pitchers" | "bullpen" | "matrix" | "audit" | "recaps" | "triple-a";
+type ActiveModule = "command" | "audit" | "allocation" | "roster";
+type AllocationTab = "starters" | "relievers";
 
 type Team = {
   abbr: string;
@@ -126,14 +127,10 @@ const MLB_TEAMS: Team[] = [
 ];
 
 const MODULES: Array<{ id: ActiveModule; label: string; short: string }> = [
-  { id: "overview", label: "Club Overview", short: "Overview" },
-  { id: "replay", label: "Pitch-by-Pitch Intelligence", short: "Replay" },
-  { id: "pitchers", label: "Pitcher Profiles", short: "Pitchers" },
-  { id: "bullpen", label: "Relief Alternatives", short: "Bullpen" },
-  { id: "matrix", label: "Deployment Matrix", short: "Matrix" },
-  { id: "audit", label: "Postgame Audit", short: "Audit" },
-  { id: "recaps", label: "Game Recaps & Email", short: "Recaps" },
-  { id: "triple-a", label: "Triple-A Pipeline", short: "Triple-A" },
+  { id: "command", label: "Where we had opportunities to prevent runs", short: "Club Command Center" },
+  { id: "audit", label: "What happened pitch-by-pitch in each window", short: "Game Audit" },
+  { id: "allocation", label: "How to optimize pitcher allocation", short: "Pitcher Allocation" },
+  { id: "roster", label: "Roster construction and pipeline", short: "Roster Construction" },
 ];
 
 function formatRuns(value: number | null | undefined): string {
@@ -836,8 +833,8 @@ function OverviewModule({
             <p className="lede">The top-right cell is the target: a hurting starter with an available relief upgrade. Counts below use the season audit summary; use the Matrix/Audit drill-down for case review.</p>
           </div>
           <div className="matrix-actions">
-            <button type="button" className="refresh-action secondary-action" onClick={() => onModuleChange("matrix")}>Open Matrix</button>
-            <button type="button" className="refresh-action secondary-action" onClick={() => onModuleChange("audit")}>Open Audit</button>
+            <button type="button" className="refresh-action secondary-action" onClick={() => onModuleChange("audit")}>Open Game Audit</button>
+            <button type="button" className="refresh-action secondary-action" onClick={() => onModuleChange("allocation")}>Open Pitcher Allocation</button>
           </div>
         </div>
         <div className="overview-matrix-grid">
@@ -1786,6 +1783,160 @@ function RecapsModule({
   );
 }
 
+function RosterConstructionSummary({
+  profilesPayload,
+  auditSummary,
+  decisions,
+  bullpenOptions,
+}: {
+  profilesPayload: PitcherProfilesPayload | null;
+  auditSummary: PitchingAuditSummaryPayload | null;
+  decisions: PitcherDecision[];
+  bullpenOptions: BullpenOption[];
+}) {
+  const profiles = profilesPayload?.profiles ?? [];
+  const reliefProfiles = inferredReliefProfiles(profilesPayload);
+  const starterProfiles = profiles.filter((p) => !reliefProfiles.some((r) => r.pitcher === p.pitcher));
+
+  const cliffRisk = starterProfiles.filter(
+    (p) => (p.maxDegradation ?? 0) >= 60 && p.pullNowGames >= 1,
+  );
+  const multiInningArms = reliefProfiles.filter((p) => p.pitchWindows >= 15);
+  const distressArms = reliefProfiles.filter((p) => (p.maxDegradation ?? 0) >= 55);
+  const availableRelief = bullpenOptions.filter(
+    (o) => typeof o.availability === "string" && /avail|rested|ready/i.test(o.availability),
+  );
+
+  const missedHooks = auditCount(auditSummary, "missed_hook_windows");
+  const delayedChanges = auditCount(auditSummary, "delayed_change_windows");
+
+  const gaps = [
+    {
+      label: "Multi-inning bridge",
+      need:
+        multiInningArms.length >= 2
+          ? "Covered — at least two relievers show multi-inning usage"
+          : "Gap — not enough multi-inning coverage in the bullpen",
+      detail:
+        multiInningArms.length > 0
+          ? `${multiInningArms.length} reliever${multiInningArms.length === 1 ? "" : "s"} with 15+ pitch windows logged.`
+          : "No relievers in the profile set show multi-inning usage history yet.",
+    },
+    {
+      label: "High-leverage freshness",
+      need:
+        availableRelief.length >= 2
+          ? "Covered — multiple relief arms marked available on current board"
+          : "Gap — limited fresh high-leverage options in current relief pool",
+      detail: `${availableRelief.length} relief option${availableRelief.length === 1 ? "" : "s"} marked available in the current board.`,
+    },
+    {
+      label: "Cliff-drop protection",
+      need:
+        cliffRisk.length > 0
+          ? "Active need — starters with degradation history and repeat Pull Now signals"
+          : "No active cliff-drop protection gap indicated",
+      detail: cliffRisk.length
+        ? `${cliffRisk.length} starter${cliffRisk.length === 1 ? "" : "s"} show elevated degradation with recurring pull signals.`
+        : "Current starter profiles do not flag repeated cliff-drop patterns.",
+    },
+    {
+      label: "Hook-timing discipline",
+      need:
+        missedHooks + delayedChanges > 0
+          ? "Process need — timing evidence suggests room to optimize hooks"
+          : "No hook-timing gap in current audit window",
+      detail: `${missedHooks} missed hooks and ${delayedChanges} delayed changes in the audit window.`,
+    },
+  ];
+
+  const opportunityCards = [
+    {
+      eyebrow: "Convert",
+      title: "Starter → 2-inning relief weapon",
+      detail:
+        starterProfiles.length > 0
+          ? `Candidates: ${starterProfiles
+              .filter((p) => (p.maxDegradation ?? 0) >= 55)
+              .slice(0, 2)
+              .map((p) => p.pitcher)
+              .join(", ") || "None flagged — profile evidence does not indicate obvious conversion candidates yet"}.`
+          : "No starter profile evidence available yet.",
+    },
+    {
+      eyebrow: "Protect",
+      title: "Cliff-drop starter usage cap",
+      detail:
+        cliffRisk.length > 0
+          ? `Consider early-hook protocols for ${cliffRisk.slice(0, 2).map((p) => p.pitcher).join(", ")}.`
+          : "No cliff-drop starters flagged in current profile evidence.",
+    },
+    {
+      eyebrow: "Add",
+      title: "Durable bridge reliever",
+      detail:
+        multiInningArms.length < 2
+          ? "Staff lacks redundancy for multi-inning relief coverage. Pipeline and acquisition focus recommended."
+          : "Multi-inning coverage appears adequate in current profile evidence.",
+    },
+    {
+      eyebrow: "Reduce",
+      title: "Back-to-back reliever exposure",
+      detail:
+        distressArms.length > 0
+          ? `${distressArms.length} reliever${distressArms.length === 1 ? "" : "s"} show distress-band degradation history; revisit rest rules.`
+          : "No reliever distress concentration detected in the current window.",
+    },
+  ];
+
+  return (
+    <section className="roster-summary">
+      <div className="section-heading section-heading--compact">
+        <div>
+          <p className="eyebrow eyebrow--navy">Roster Gaps</p>
+          <h2>Where the current staff structure creates preventable runs.</h2>
+          <p className="lede">
+            Gap detection from season profile and audit evidence. Findings are labeled factually and flagged as
+            unavailable when source data is missing.
+          </p>
+        </div>
+      </div>
+      <div className="roster-gap-grid">
+        {gaps.map((gap) => (
+          <article className="roster-gap-card" key={gap.label}>
+            <p className="eyebrow">{gap.label}</p>
+            <h3>{gap.need}</h3>
+            <p>{gap.detail}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="section-heading section-heading--compact">
+        <div>
+          <p className="eyebrow eyebrow--navy">Opportunity Cards</p>
+          <h2>Staff-construction moves implied by the evidence.</h2>
+        </div>
+      </div>
+      <div className="roster-gap-grid">
+        {opportunityCards.map((card) => (
+          <article className="roster-gap-card roster-gap-card--gold" key={card.title}>
+            <p className="eyebrow">{card.eyebrow}</p>
+            <h3>{card.title}</h3>
+            <p>{card.detail}</p>
+          </article>
+        ))}
+      </div>
+
+      {decisions.length === 0 && profiles.length === 0 ? (
+        <EmptyState
+          title="Not yet available"
+          detail="Roster construction context will appear once profile and audit evidence is available for this club."
+        />
+      ) : null}
+    </section>
+  );
+}
+
 function TripleAModule({ team, candidates }: { team: Team; candidates: TripleAConversionCandidate[] }) {
   const teamCandidates = candidates.filter((candidate) => teamMatchesCandidate(team, candidate));
   const visible = teamCandidates.length > 0 ? teamCandidates : candidates.slice(0, 12);
@@ -1860,7 +2011,8 @@ function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"
 
 export default function App() {
   const [selectedTeamAbbr, setSelectedTeamAbbr] = useState("ATL");
-  const [activeModule, setActiveModule] = useState<ActiveModule>("overview");
+  const [activeModule, setActiveModule] = useState<ActiveModule>("command");
+  const [allocationTab, setAllocationTab] = useState<AllocationTab>("starters");
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [games, setGames] = useState<EnterpriseGameSummary[]>([]);
   const [replay, setReplay] = useState<PitchingReplayResponse | null>(null);
@@ -1945,7 +2097,7 @@ export default function App() {
   const renderModule = () => {
     if (!payload) return null;
     switch (activeModule) {
-      case "overview":
+      case "command":
         return (
           <OverviewModule
             team={selectedTeam}
@@ -1958,30 +2110,106 @@ export default function App() {
             onModuleChange={setActiveModule}
           />
         );
-      case "replay":
-        return <ReplayModule games={games} selectedGameId={selectedGameId} onGameChange={setSelectedGameId} replay={replay} recap={recap} team={selectedTeam} />;
-      case "pitchers":
-        return <PitchersModule profilesPayload={profilesPayload} />;
-      case "bullpen":
-        return <BullpenModule options={bullpenOptions} profilesPayload={profilesPayload} />;
-      case "matrix":
-        return <MatrixModule decisions={decisions} bullpenOptions={bullpenOptions} />;
       case "audit":
-        return <AuditModule audits={audits} auditSummary={auditSummary} auditYear={auditYear} onAuditYearChange={setAuditYear} />;
-      case "recaps":
         return (
-          <RecapsModule
-            team={selectedTeam}
-            games={games}
-            selectedGameId={selectedGameId}
-            onGameChange={setSelectedGameId}
-            recap={recap}
-            settings={recapSettings}
-            onSettingsSaved={setRecapSettings}
-          />
+          <>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Game Audit</p>
+                <h2>What happened pitch-by-pitch in each decision window.</h2>
+                <p className="lede">
+                  Pick a game and drill into the recap, decision timeline, pitch-by-pitch replay, and counterfactual
+                  against the recorded manager move.
+                </p>
+              </div>
+            </div>
+            <RecapsModule
+              team={selectedTeam}
+              games={games}
+              selectedGameId={selectedGameId}
+              onGameChange={setSelectedGameId}
+              recap={recap}
+              settings={recapSettings}
+              onSettingsSaved={setRecapSettings}
+            />
+            <ReplayModule
+              games={games}
+              selectedGameId={selectedGameId}
+              onGameChange={setSelectedGameId}
+              replay={replay}
+              recap={recap}
+              team={selectedTeam}
+            />
+            <AuditModule
+              audits={audits}
+              auditSummary={auditSummary}
+              auditYear={auditYear}
+              onAuditYearChange={setAuditYear}
+            />
+          </>
         );
-      case "triple-a":
-        return <TripleAModule team={selectedTeam} candidates={tripleA} />;
+      case "allocation":
+        return (
+          <>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Pitcher Allocation</p>
+                <h2>How to optimize staff usage to prevent the most runs.</h2>
+                <p className="lede">
+                  Switch between starters and relievers to understand who holds quality deep, who decays or cliff-drops,
+                  and who can carry multi-inning relief usage.
+                </p>
+              </div>
+              <div className="allocation-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={allocationTab === "starters"}
+                  className={allocationTab === "starters" ? "active" : ""}
+                  onClick={() => setAllocationTab("starters")}
+                >
+                  Starters
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={allocationTab === "relievers"}
+                  className={allocationTab === "relievers" ? "active" : ""}
+                  onClick={() => setAllocationTab("relievers")}
+                >
+                  Relievers
+                </button>
+              </div>
+            </div>
+            {allocationTab === "starters" ? (
+              <PitchersModule profilesPayload={profilesPayload} />
+            ) : (
+              <BullpenModule options={bullpenOptions} profilesPayload={profilesPayload} />
+            )}
+            <MatrixModule decisions={decisions} bullpenOptions={bullpenOptions} />
+          </>
+        );
+      case "roster":
+        return (
+          <>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Roster Construction</p>
+                <h2>Staff-building implications from season evidence.</h2>
+                <p className="lede">
+                  Where the current staff structure creates preventable runs, and which Triple-A arms map to MLB relief roles.
+                </p>
+              </div>
+            </div>
+            <RosterConstructionSummary
+              profilesPayload={profilesPayload}
+              auditSummary={auditSummary}
+              decisions={decisions}
+              bullpenOptions={bullpenOptions}
+            />
+            <TripleAModule team={selectedTeam} candidates={tripleA} />
+          </>
+        );
       default:
         return null;
     }
@@ -2005,7 +2233,7 @@ export default function App() {
         activeModule={activeModule}
         onTeamChange={(team) => {
           setSelectedTeamAbbr(team.abbr);
-          setActiveModule("overview");
+          setActiveModule("command");
         }}
         onModuleChange={setActiveModule}
       />
