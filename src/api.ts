@@ -66,7 +66,7 @@ export function fetchRunSavingBoard(query: RunSavingBoardQuery = {}): Promise<Ru
   params.set("league", query.league ?? "mlb");
   if (query.team) params.set("team", query.team);
   if (query.date) params.set("date", query.date);
-  if (query.limit != null) params.set("limit", String(query.limit));
+  if (query.limit != null) params.set("limit", String(Math.min(query.limit, 50)));
   return fetchJson<RunSavingBoardPayload>(`/v1/enterprise/run-saving/board?${params.toString()}`);
 }
 
