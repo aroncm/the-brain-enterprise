@@ -160,7 +160,17 @@ export type PreventableRunsOpportunityRow = {
   status: string | null;
   damageRunsNext6Outs: number | null;
   projectedDamageProbability: number | null;
+  projectedRunsThroughNextPocket?: number | null;
   projectedPreventableRuns: number | null;
+  actualRunsThroughNextPocket?: number | null;
+  actualPreventableRunsProxy?: number | null;
+  actualChangeWithinNextPocket?: boolean | null;
+  damageFlag?: number | null;
+  missedHookDamageFlag?: number | null;
+  productionDegradation?: number | null;
+  normalizedDegradation?: number | null;
+  decisionDelta?: number | null;
+  calibratedPreventableSignal?: number | null;
   calibrationBucket: string | null;
   calibrationSampleCount: number | null;
   calibrationMeanDamage: number | null;

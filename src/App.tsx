@@ -163,6 +163,7 @@ function featureLabel(value: string | null | undefined): string {
   const labels: Record<string, string> = {
     base_traffic: "Base traffic",
     leverage: "Leverage",
+    leverage_index: "Leverage",
     leveraged_production_degradation: "Leveraged production degradation",
     pitch_count_norm: "Pitch count",
     tto: "Times through order",
@@ -498,24 +499,25 @@ function CalibratedOpportunityRow({ row }: { row: PreventableRunsOpportunityRow 
     .slice(0, 3);
   const half = row.half ? normalize(row.half) : "Half unavailable";
   const context = `Inn ${row.inning ?? "—"} · ${half} · ${row.outs ?? "—"} out · Bases ${row.baseState ?? "—"}`;
+  const normalizedDegPct = row.normalizedDegradation == null ? UNAVAILABLE : fmtPct(row.normalizedDegradation);
 
   return (
     <div className="calibrated-row">
       <div>
         <strong>{row.pitcherName}</strong>
-        <span>{row.team} vs {row.opponent} · {formatDateText(row.gameDate)}</span>
+        <span>{row.team || "Team"} vs {row.opponent || "Opponent"} · {formatDateText(row.gameDate)}</span>
       </div>
       <div>
         <strong>{context}</strong>
-        <span>PC {row.pitchCount ?? "—"} · LI {fmtNumber(row.leverageIndex, 2)} · Deg {fmtNumber(row.degradationScore, 2)}</span>
+        <span>PC {row.pitchCount ?? "—"} · LI {fmtNumber(row.leverageIndex, 2)} · Prod deg {fmtNumber(row.productionDegradation ?? row.degradationScore, 2)} · Norm {normalizedDegPct}</span>
       </div>
       <div>
         <strong>{fmtRuns(row.projectedPreventableRuns)} runs</strong>
-        <span>Damage probability {fmtPct(row.projectedDamageProbability)}</span>
+        <span>Damage {fmtPct(row.projectedDamageProbability)} · next pocket {fmtRuns(row.projectedRunsThroughNextPocket)}</span>
       </div>
       <div>
         <strong>{row.calibrationSampleCount?.toLocaleString() ?? UNAVAILABLE}</strong>
-        <span>Comparable MLB windows</span>
+        <span>Bucket {row.calibrationBucket ?? "—"} · signal {fmtNumber(row.calibratedPreventableSignal, 2)}</span>
       </div>
       <div className="driver-list">
         {topDrivers.length === 0 ? (

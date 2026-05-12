@@ -104,6 +104,17 @@ function stringOrNull(value: unknown): string | null {
   return null;
 }
 
+function booleanOrNull(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") return true;
+    if (normalized === "false" || normalized === "0") return false;
+  }
+  return null;
+}
+
 function mapFeatureContribution(value: unknown): PreventableRunsFeatureContribution {
   const item = asRecord(value);
   return {
@@ -145,11 +156,13 @@ function mapPitcherSummary(value: unknown): PreventableRunsPitcherSummary {
 
 function mapOpportunityRow(value: unknown): PreventableRunsOpportunityRow {
   const item = asRecord(value);
+  const productionDegradation = numberOrNull(pick(item, "productionDegradation", "production_degradation"));
+  const normalizedDegradation = numberOrNull(pick(item, "normalizedDegradation", "normalized_degradation"));
   return {
     gameId: stringOrNull(pick(item, "gameId", "game_id")) ?? "",
     gameDate: stringOrNull(pick(item, "gameDate", "game_date")),
-    team: stringOrNull(pick(item, "team")) ?? "",
-    opponent: stringOrNull(pick(item, "opponent")) ?? "",
+    team: stringOrNull(pick(item, "team", "fieldingTeam", "fielding_team")) ?? "",
+    opponent: stringOrNull(pick(item, "opponent", "battingTeam", "batting_team")) ?? "",
     pitcherId: stringOrNull(pick(item, "pitcherId", "pitcher_id")),
     pitcherName: stringOrNull(pick(item, "pitcherName", "pitcher_name")) ?? "Pitcher",
     inning: numberOrNull(pick(item, "inning")),
@@ -157,19 +170,29 @@ function mapOpportunityRow(value: unknown): PreventableRunsOpportunityRow {
     outs: numberOrNull(pick(item, "outs")),
     baseState: stringOrNull(pick(item, "baseState", "base_state")),
     pitchCount: numberOrNull(pick(item, "pitchCount", "pitch_count")),
-    status: stringOrNull(pick(item, "status")),
+    status: stringOrNull(pick(item, "status", "recommendationStatus", "recommendation_status")),
     damageRunsNext6Outs: numberOrNull(pick(item, "damageRunsNext6Outs", "damage_runs_next_6_outs")),
     projectedDamageProbability: numberOrNull(pick(item, "projectedDamageProbability", "projected_damage_probability")),
+    projectedRunsThroughNextPocket: numberOrNull(pick(item, "projectedRunsThroughNextPocket", "projected_runs_through_next_pocket")),
     projectedPreventableRuns: numberOrNull(pick(item, "projectedPreventableRuns", "projected_preventable_runs")),
+    actualRunsThroughNextPocket: numberOrNull(pick(item, "actualRunsThroughNextPocket", "actual_runs_through_next_pocket")),
+    actualPreventableRunsProxy: numberOrNull(pick(item, "actualPreventableRunsProxy", "actual_preventable_runs_proxy")),
+    actualChangeWithinNextPocket: booleanOrNull(pick(item, "actualChangeWithinNextPocket", "actual_change_within_next_pocket")),
+    damageFlag: numberOrNull(pick(item, "damageFlag", "damage_flag")),
+    missedHookDamageFlag: numberOrNull(pick(item, "missedHookDamageFlag", "missed_hook_damage_flag")),
+    productionDegradation,
+    normalizedDegradation,
+    decisionDelta: numberOrNull(pick(item, "decisionDelta", "decision_delta")),
+    calibratedPreventableSignal: numberOrNull(pick(item, "calibratedPreventableSignal", "calibrated_preventable_signal")),
     calibrationBucket: stringOrNull(pick(item, "calibrationBucket", "calibration_bucket")),
     calibrationSampleCount: numberOrNull(pick(item, "calibrationSampleCount", "calibration_sample_count")),
     calibrationMeanDamage: numberOrNull(pick(item, "calibrationMeanDamage", "calibration_mean_damage")),
     calibrationConfidence: numberOrNull(pick(item, "calibrationConfidence", "calibration_confidence")),
     leverageIndex: numberOrNull(pick(item, "leverageIndex", "leverage_index")),
-    degradationScore: numberOrNull(pick(item, "degradationScore", "degradation_score")),
+    degradationScore: numberOrNull(pick(item, "degradationScore", "degradation_score")) ?? productionDegradation ?? normalizedDegradation,
     decayVelocity: numberOrNull(pick(item, "decayVelocity", "decay_velocity")),
     decayAcceleration: numberOrNull(pick(item, "decayAcceleration", "decay_acceleration")),
-    topFeatures: asArray(pick(item, "topFeatures", "top_features")).map(mapFeatureContribution),
+    topFeatures: asArray(pick(item, "topFeatures", "top_features", "topFeatureContributions", "top_feature_contributions")).map(mapFeatureContribution),
   };
 }
 
