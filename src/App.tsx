@@ -493,7 +493,7 @@ function usePreventableRunsOpportunities({ season, team, limit }: { season: stri
 }
 
 function CalibratedOpportunityRow({ row }: { row: PreventableRunsOpportunityRow }) {
-  const topDrivers = row.topFeatures
+  const topDrivers = (row.topFeatures ?? [])
     .filter((feature) => typeof feature.contribution === "number" && feature.contribution > 0)
     .slice(0, 3);
   const half = row.half ? normalize(row.half) : "Half unavailable";

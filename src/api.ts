@@ -6,7 +6,11 @@ import type {
   PitchingRecapEmailResponse,
   PitchingRecapSettings,
   PitchingReplayResponse,
+  PreventableRunsFeatureContribution,
   PreventableRunsOpportunitiesPayload,
+  PreventableRunsOpportunityRow,
+  PreventableRunsPitcherSummary,
+  PreventableRunsTeamSummary,
   RunSavingBoardPayload,
 } from "./types";
 
@@ -71,6 +75,124 @@ export function fetchRunSavingBoard(query: RunSavingBoardQuery = {}): Promise<Ru
   return fetchJson<RunSavingBoardPayload>(`/v1/enterprise/run-saving/board?${params.toString()}`);
 }
 
+type ApiRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): ApiRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as ApiRecord) : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function pick(source: ApiRecord, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (source[key] !== undefined) return source[key];
+  }
+  return undefined;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function mapFeatureContribution(value: unknown): PreventableRunsFeatureContribution {
+  const item = asRecord(value);
+  return {
+    feature: stringOrNull(pick(item, "feature")) ?? "unknown",
+    value: numberOrNull(pick(item, "value")),
+    weight: numberOrNull(pick(item, "weight")),
+    contribution: numberOrNull(pick(item, "contribution")),
+  };
+}
+
+function mapTeamSummary(value: unknown): PreventableRunsTeamSummary {
+  const item = asRecord(value);
+  return {
+    team: stringOrNull(pick(item, "team")) ?? "",
+    windowCount: numberOrNull(pick(item, "windowCount", "window_count")) ?? 0,
+    totalProjectedPreventableRuns: numberOrNull(pick(item, "totalProjectedPreventableRuns", "total_projected_preventable_runs")) ?? 0,
+    avgProjectedPreventableRuns: numberOrNull(pick(item, "avgProjectedPreventableRuns", "avg_projected_preventable_runs")) ?? 0,
+    avgProjectedDamageProbability: numberOrNull(pick(item, "avgProjectedDamageProbability", "avg_projected_damage_probability")) ?? 0,
+    actualPreventableRunsProxy: numberOrNull(pick(item, "actualPreventableRunsProxy", "actual_preventable_runs_proxy")),
+    damageRate: numberOrNull(pick(item, "damageRate", "damage_rate")),
+    missedHookDamageCount: numberOrNull(pick(item, "missedHookDamageCount", "missed_hook_damage_count")) ?? 0,
+  };
+}
+
+function mapPitcherSummary(value: unknown): PreventableRunsPitcherSummary {
+  const item = asRecord(value);
+  return {
+    team: stringOrNull(pick(item, "team")) ?? "",
+    pitcherId: stringOrNull(pick(item, "pitcherId", "pitcher_id")),
+    pitcherName: stringOrNull(pick(item, "pitcherName", "pitcher_name")) ?? "Pitcher",
+    windowCount: numberOrNull(pick(item, "windowCount", "window_count")) ?? 0,
+    totalProjectedPreventableRuns: numberOrNull(pick(item, "totalProjectedPreventableRuns", "total_projected_preventable_runs")) ?? 0,
+    avgProjectedPreventableRuns: numberOrNull(pick(item, "avgProjectedPreventableRuns", "avg_projected_preventable_runs")) ?? 0,
+    avgProjectedDamageProbability: numberOrNull(pick(item, "avgProjectedDamageProbability", "avg_projected_damage_probability")) ?? 0,
+    actualPreventableRunsProxy: numberOrNull(pick(item, "actualPreventableRunsProxy", "actual_preventable_runs_proxy")),
+    damageRate: numberOrNull(pick(item, "damageRate", "damage_rate")),
+  };
+}
+
+function mapOpportunityRow(value: unknown): PreventableRunsOpportunityRow {
+  const item = asRecord(value);
+  return {
+    gameId: stringOrNull(pick(item, "gameId", "game_id")) ?? "",
+    gameDate: stringOrNull(pick(item, "gameDate", "game_date")),
+    team: stringOrNull(pick(item, "team")) ?? "",
+    opponent: stringOrNull(pick(item, "opponent")) ?? "",
+    pitcherId: stringOrNull(pick(item, "pitcherId", "pitcher_id")),
+    pitcherName: stringOrNull(pick(item, "pitcherName", "pitcher_name")) ?? "Pitcher",
+    inning: numberOrNull(pick(item, "inning")),
+    half: stringOrNull(pick(item, "half")),
+    outs: numberOrNull(pick(item, "outs")),
+    baseState: stringOrNull(pick(item, "baseState", "base_state")),
+    pitchCount: numberOrNull(pick(item, "pitchCount", "pitch_count")),
+    status: stringOrNull(pick(item, "status")),
+    damageRunsNext6Outs: numberOrNull(pick(item, "damageRunsNext6Outs", "damage_runs_next_6_outs")),
+    projectedDamageProbability: numberOrNull(pick(item, "projectedDamageProbability", "projected_damage_probability")),
+    projectedPreventableRuns: numberOrNull(pick(item, "projectedPreventableRuns", "projected_preventable_runs")),
+    calibrationBucket: stringOrNull(pick(item, "calibrationBucket", "calibration_bucket")),
+    calibrationSampleCount: numberOrNull(pick(item, "calibrationSampleCount", "calibration_sample_count")),
+    calibrationMeanDamage: numberOrNull(pick(item, "calibrationMeanDamage", "calibration_mean_damage")),
+    calibrationConfidence: numberOrNull(pick(item, "calibrationConfidence", "calibration_confidence")),
+    leverageIndex: numberOrNull(pick(item, "leverageIndex", "leverage_index")),
+    degradationScore: numberOrNull(pick(item, "degradationScore", "degradation_score")),
+    decayVelocity: numberOrNull(pick(item, "decayVelocity", "decay_velocity")),
+    decayAcceleration: numberOrNull(pick(item, "decayAcceleration", "decay_acceleration")),
+    topFeatures: asArray(pick(item, "topFeatures", "top_features")).map(mapFeatureContribution),
+  };
+}
+
+function normalizePreventableRunsPayload(value: unknown): PreventableRunsOpportunitiesPayload {
+  const payload = asRecord(value);
+  const rows = asArray(pick(payload, "rows")).map(mapOpportunityRow);
+  const summaryValue = pick(payload, "summary");
+  const summary = summaryValue && typeof summaryValue === "object" ? mapTeamSummary(summaryValue) : null;
+  return {
+    status: stringOrNull(pick(payload, "status")) ?? "unavailable",
+    generatedAt: stringOrNull(pick(payload, "generatedAt", "generated_at")),
+    season: numberOrNull(pick(payload, "season")),
+    team: stringOrNull(pick(payload, "team")),
+    rowCount: numberOrNull(pick(payload, "rowCount", "row_count")) ?? rows.length,
+    sourceRows: numberOrNull(pick(payload, "sourceRows", "source_rows")),
+    source: stringOrNull(pick(payload, "source")),
+    summary,
+    teamSummaries: asArray(pick(payload, "teamSummaries", "team_summaries")).map(mapTeamSummary),
+    pitcherSummaries: asArray(pick(payload, "pitcherSummaries", "pitcher_summaries")).map(mapPitcherSummary),
+    rows,
+  };
+}
+
 export function fetchPreventableRunsOpportunities(
   query: { season?: number | string; team?: string; limit?: number } = {},
 ): Promise<PreventableRunsOpportunitiesPayload> {
@@ -78,7 +200,7 @@ export function fetchPreventableRunsOpportunities(
   if (query.season) params.set("season", String(query.season));
   if (query.team) params.set("team", query.team);
   if (query.limit != null) params.set("limit", String(query.limit));
-  return fetchJson<PreventableRunsOpportunitiesPayload>(`/v1/pitching/preventable-runs/opportunities?${params.toString()}`);
+  return fetchJson<unknown>(`/v1/pitching/preventable-runs/opportunities?${params.toString()}`).then(normalizePreventableRunsPayload);
 }
 
 export function fetchEnterpriseGames(query: RunSavingBoardQuery = {}): Promise<EnterpriseGamesPayload> {
