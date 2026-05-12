@@ -9,6 +9,7 @@ import {
   fetchPreventableRunsOpportunities,
   fetchRunSavingBoard,
   getConfiguredApiBase,
+  sendPitchingRecapEmail,
 } from "./api";
 import type {
   AuditRow,
@@ -20,6 +21,7 @@ import type {
   PitchingAuditSummaryPayload,
   PitchingAuditWindow,
   PitchingGameRecap,
+  PitchingRecapPitcher,
   PitchingReplayEntry,
   PitchingReplayResponse,
   PreventableRunsOpportunityRow,
@@ -150,6 +152,57 @@ function fmtPct(value: number | null | undefined): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function fmtRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return UNAVAILABLE;
+  return `${Math.round(value * 100)}%`;
+}
+
+function fmtSigned(value: number | null | undefined, digits = 1): string {
+  if (value == null || !Number.isFinite(value)) return UNAVAILABLE;
+  return `${value > 0 ? "+" : ""}${value.toFixed(digits)}`;
+}
+
+function clamp(value: number, min = 0, max = 1): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function scaledPercent(value: number | null | undefined, scale = 1): number {
+  if (value == null || !Number.isFinite(value) || scale <= 0) return 0;
+  return clamp(value / scale);
+}
+
+function ordinal(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "unknown";
+  const integer = Math.trunc(value);
+  const suffix = integer % 100 >= 11 && integer % 100 <= 13 ? "th" : integer % 10 === 1 ? "st" : integer % 10 === 2 ? "nd" : integer % 10 === 3 ? "rd" : "th";
+  return `${integer}${suffix}`;
+}
+
+function halfInningLabel(half: string | null | undefined, inning: number | null | undefined): string {
+  const normalizedHalf = String(half || "").toLowerCase() === "top" ? "top" : String(half || "").toLowerCase() === "bottom" ? "bottom" : "half";
+  return `${normalizedHalf} of the ${ordinal(inning)}`;
+}
+
+function baseStateLabel(baseState: string | null | undefined): string {
+  const value = String(baseState || "").trim();
+  const labels: Record<string, string> = {
+    "000": "Bases empty",
+    "100": "Man on first",
+    "010": "Man on second",
+    "001": "Man on third",
+    "110": "Men on first and second",
+    "101": "Men on first and third",
+    "011": "Men on second and third",
+    "111": "Bases loaded",
+  };
+  return labels[value] ?? "Base state unavailable";
+}
+
+function outsLabel(outs: number | null | undefined): string {
+  if (outs == null || !Number.isFinite(outs)) return "outs unavailable";
+  return `${outs} ${outs === 1 ? "out" : "outs"}`;
+}
+
 function normalize(value: string | null | undefined): string {
   if (!value) return "";
   return value
@@ -218,8 +271,37 @@ function scoreForEntry(entry: PitchingReplayEntry, replay: PitchingReplayRespons
   return `${replay.game.away_team} ${entry.snapshot.away_score ?? "—"} - ${entry.snapshot.home_score ?? "—"} ${replay.game.home_team}`;
 }
 
+function gameSituationLabel(entry: PitchingReplayEntry): string {
+  return `${halfInningLabel(entry.snapshot.half, entry.snapshot.inning)} · ${outsLabel(entry.snapshot.outs)} · ${baseStateLabel(entry.snapshot.base_state)}`;
+}
+
 function statusLabel(status: string | null | undefined): string {
   return String(status || "STAY").replace(/_/g, " ").toUpperCase();
+}
+
+function statusRank(status: string | null | undefined): number {
+  const label = statusLabel(status);
+  if (label === "DISTRESS") return 4;
+  if (label === "PULL NOW") return 3;
+  if (label === "PREP") return 2;
+  if (label === "WATCH") return 1;
+  return 0;
+}
+
+function maxStatus(left: string, right: string): string {
+  return statusRank(right) > statusRank(left) ? statusLabel(right) : statusLabel(left);
+}
+
+function signalClass(status: string): string {
+  return statusLabel(status).toLowerCase().replace(/\s+/g, "_");
+}
+
+function monotonicStatuses(entries: PitchingReplayEntry[]): string[] {
+  let current = "STAY";
+  return entries.map((entry) => {
+    current = maxStatus(current, statusLabel(entry.recommendation.status));
+    return current;
+  });
 }
 
 function baseStateFlags(baseState: string | null | undefined) {
@@ -291,6 +373,25 @@ function selectedTeamPitchers(recap: PitchingGameRecap | null, team: Team) {
   return recap?.starters.filter((pitcher) => pitcher.team === team.abbr) ?? [];
 }
 
+function teamPitcherRecapCopy(pitcher: PitchingRecapPitcher | null): string {
+  if (!pitcher) return "No pitcher-specific recap has been generated for this club yet.";
+  const firstAction =
+    pitcher.first_pull_now_inning != null
+      ? `Pull Now in the ${ordinal(pitcher.first_pull_now_inning)} at pitch ${pitcher.first_pull_now_pitch_count ?? "—"}`
+      : pitcher.first_alert_inning != null
+        ? `${statusLabel(pitcher.first_alert_status)} in the ${ordinal(pitcher.first_alert_inning)} at pitch ${pitcher.first_alert_pitch_count ?? "—"}`
+        : "No clear action point";
+  const result =
+    pitcher.runs_allowed_after_signal == null
+      ? "post-signal scoring unavailable"
+      : `${pitcher.runs_allowed_after_signal} run${pitcher.runs_allowed_after_signal === 1 ? "" : "s"} after the signal`;
+  const exit =
+    pitcher.actual_exit_inning == null
+      ? "exit timing unavailable"
+      : `exited in the ${ordinal(pitcher.actual_exit_inning)} at pitch ${pitcher.actual_exit_pitch_count ?? "—"}`;
+  return `${firstAction}; ${exit}; ${result}.`;
+}
+
 function TeamLogo({ abbr }: { abbr: string }) {
   const src = teamLogoUrl(abbr);
   return <span className="team-logo">{src ? <img src={src} alt={`${abbr} logo`} /> : abbr}</span>;
@@ -317,6 +418,68 @@ function KPI({ label, value, detail, tone = "neutral" }: { label: string; value:
 
 function SourceTag({ label, source }: { label: string; source: "official" | "model" | "rule" | "unavailable" }) {
   return <span className={`source-tag source-tag--${source}`}>{label}</span>;
+}
+
+function GaugeMetric({
+  label,
+  value,
+  detail,
+  percent,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  percent?: number;
+  tone?: "neutral" | "good" | "warn" | "bad" | "gold";
+}) {
+  const width = percent == null ? 0 : Math.round(clamp(percent) * 100);
+  return (
+    <div className={`evidence-gauge evidence-gauge--${tone}`}>
+      <div className="evidence-gauge-head">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      {percent != null ? (
+        <div className="gauge-track" aria-hidden="true">
+          <i style={{ width: `${width}%` }} />
+        </div>
+      ) : null}
+      {detail ? <em>{detail}</em> : null}
+    </div>
+  );
+}
+
+function TrendSparkline({ label, value, detail, points }: { label: string; value: string; detail?: string; points: Array<number | null | undefined> }) {
+  const numbers = points.filter((point): point is number => typeof point === "number" && Number.isFinite(point));
+  if (numbers.length < 2) {
+    return <GaugeMetric label={label} value={value} detail={detail ?? "Trend unavailable"} />;
+  }
+  const width = 180;
+  const height = 46;
+  const min = Math.min(...numbers);
+  const max = Math.max(...numbers);
+  const range = Math.max(0.01, max - min);
+  const path = numbers
+    .map((point, index) => {
+      const x = (index / Math.max(1, numbers.length - 1)) * width;
+      const y = height - ((point - min) / range) * (height - 8) - 4;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <div className="sparkline-card">
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+        {detail ? <em>{detail}</em> : null}
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${label} trend`}>
+        <path className="sparkline-baseline" d={`M0 ${height - 4} H${width}`} />
+        <path className="sparkline-path" d={path} />
+      </svg>
+    </div>
+  );
 }
 
 function MiniCurve({ values }: { values: number[] }) {
@@ -848,20 +1011,55 @@ function GameAudit({
   recap: PitchingGameRecap | null;
 }) {
   const [pitchIndex, setPitchIndex] = useState(0);
+  const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const entries = useMemo(
     () => (replay?.entries ?? []).filter((entry) => entry.snapshot.fielding_team === team.abbr).sort((a, b) => pitchCount(a) - pitchCount(b)),
     [replay, team.abbr],
   );
-  const selected = entries[Math.min(pitchIndex, Math.max(0, entries.length - 1))] ?? null;
+  const selectedIndex = Math.min(pitchIndex, Math.max(0, entries.length - 1));
+  const displayStatuses = useMemo(() => monotonicStatuses(entries), [entries]);
+  const selected = entries[selectedIndex] ?? null;
+  const displayStatus = selected ? displayStatuses[selectedIndex] ?? statusLabel(selected.recommendation.status) : "STAY";
   const selectedGame = games.find((game) => game.game_id === selectedGameId) ?? games[0] ?? null;
   const teamPitchers = selectedTeamPitchers(recap, team);
   const keyPitcher = teamPitchers.find((pitcher) => pitcher.first_pull_now_inning != null || pitcher.first_alert_inning != null) ?? teamPitchers[0] ?? null;
-  const pullIndex = entries.findIndex((entry) => statusLabel(entry.recommendation.status) === "PULL NOW");
+  const pullIndex = displayStatuses.findIndex((status) => statusRank(status) >= statusRank("PULL NOW"));
   const bestCandidate = selected?.top_candidates?.find((candidate) => candidate.available) ?? selected?.top_candidates?.[0] ?? null;
+  const selectedState = selected?.snapshot.starter_state ?? null;
+  const topComponents = Object.entries(selectedState?.component_contributions ?? {})
+    .sort((a, b) => Math.abs(b[1] ?? 0) - Math.abs(a[1] ?? 0))
+    .slice(0, 5);
+  const velocityTrend = [
+    selectedState?.seasonal_velo_baseline,
+    selectedState?.velo_mean_15,
+    selectedState?.velo_mean_10,
+    selectedState?.velo_mean_5,
+    selected?.snapshot.release_speed,
+  ];
+  const spinTrend = [
+    selectedState?.seasonal_spin_baseline,
+    selectedState?.spin_mean_15,
+    selectedState?.spin_mean_10,
+    selectedState?.spin_mean_5,
+  ];
+  const reliefOptions = selected?.top_candidates?.slice(0, 3) ?? [];
 
   useEffect(() => {
     setPitchIndex(0);
+    setEmailStatus(null);
   }, [selectedGameId]);
+
+  async function handleSendRecapEmail() {
+    if (!selectedGameId) return;
+    setEmailStatus("Sending briefing...");
+    try {
+      const response = await sendPitchingRecapEmail({ game_id: selectedGameId, team: team.abbr, send: true }, "mlb");
+      const recipients = response.sent_to?.length ? response.sent_to.join(", ") : response.recipients?.join(", ");
+      setEmailStatus(response.sent ? `Briefing sent${recipients ? ` to ${recipients}` : ""}.` : "Briefing generated, but no email was sent.");
+    } catch (caught) {
+      setEmailStatus(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
 
   return (
     <section className="workflow">
@@ -890,7 +1088,7 @@ function GameAudit({
           <div className="audit-summary-grid">
             <KPI
               label="Key Window"
-              value={keyPitcher?.first_pull_now_inning != null ? `Inn ${keyPitcher.first_pull_now_inning}, PC ${keyPitcher.first_pull_now_pitch_count}` : UNAVAILABLE}
+              value={keyPitcher?.first_pull_now_inning != null ? `${ordinal(keyPitcher.first_pull_now_inning)} inning, pitch ${keyPitcher.first_pull_now_pitch_count}` : UNAVAILABLE}
               detail={keyPitcher ? `${keyPitcher.pitcher_name} reached ${statusLabel(keyPitcher.peak_status)}.` : "No action window returned."}
               tone="gold"
             />
@@ -901,13 +1099,13 @@ function GameAudit({
               tone={keyPitcher?.missed_hook ? "bad" : "neutral"}
             />
             <KPI label="Best Alternative Now" value={bestCandidate?.player_name || UNAVAILABLE} detail={bestCandidate ? `Usage cost ${fmtNumber(bestCandidate.usage_cost, 2)} · net option ${fmtNumber(bestCandidate.net_option_score, 2)}` : "No candidate attached to this pitch."} />
-            <KPI label="Current Signal" value={statusLabel(selected.recommendation.status)} detail={`Pitch ${pitchCount(selected)} · ${scoreForEntry(selected, replay)}`} />
+            <KPI label="Current Signal" value={displayStatus} detail={`Pitch ${pitchCount(selected)} · ${gameSituationLabel(selected)}`} />
           </div>
 
           <article className="panel replay-panel">
-            <div className={`signal-banner signal-${String(selected.recommendation.status).toLowerCase()}`}>
-              <strong>{statusLabel(selected.recommendation.status)}</strong>
-              <span>{selected.snapshot.pitcher_name} · pitch {pitchCount(selected)} · LI {fmtNumber(selected.snapshot.leverage_index, 2)}</span>
+            <div className={`signal-banner signal-${signalClass(displayStatus)}`}>
+              <strong>{displayStatus}</strong>
+              <span>{selected.snapshot.pitcher_name} · {gameSituationLabel(selected)} · LI {fmtNumber(selected.snapshot.leverage_index, 2)}</span>
             </div>
 
             <div className="replay-layout">
@@ -916,14 +1114,16 @@ function GameAudit({
                 <h3>{selected.snapshot.pitcher_name}</h3>
                 <BasesAndOuts baseState={selected.snapshot.base_state} outs={selected.snapshot.outs} />
                 <div className="situation-list">
-                  <span>Inning <strong>{selected.snapshot.half === "top" ? "▲" : "▼"}{selected.snapshot.inning}</strong></span>
+                  <span>Situation <strong>{halfInningLabel(selected.snapshot.half, selected.snapshot.inning)}</strong></span>
+                  <span>Bases <strong>{baseStateLabel(selected.snapshot.base_state)}</strong></span>
+                  <span>Outs <strong>{outsLabel(selected.snapshot.outs)}</strong></span>
                   <span>Pitch count <strong>{pitchCount(selected)}</strong></span>
-                  <span>TTO <strong>{selected.snapshot.starter_state.times_through_order}</strong></span>
+                  <span>Times through order <strong>{selected.snapshot.starter_state.times_through_order}</strong></span>
                   <span>Score <strong>{scoreForEntry(selected, replay)}</strong></span>
                 </div>
               </aside>
 
-              <PitchPlot entries={entries} selectedIndex={Math.min(pitchIndex, entries.length - 1)} />
+              <PitchPlot entries={entries} selectedIndex={selectedIndex} />
 
               <aside className="model-card">
                 <p className="eyebrow">Model Read</p>
@@ -933,7 +1133,7 @@ function GameAudit({
                   <span>Velocity change <strong>{fmtNumber(velocityDrop(selected), 1)} mph</strong></span>
                   <span>Stuff score <strong>{stuffScore(selected)}/100</strong></span>
                   <span>Degradation <strong>{fmtNumber(selected.snapshot.starter_state.degradation_score, 2)}</strong></span>
-                  <span>Decision delta <strong>{fmtNumber(selected.recommendation.decision_delta, 2)}</strong></span>
+                  <span>Recommended move <strong>{bestCandidate?.player_name || "Review bullpen"}</strong></span>
                 </div>
                 <div className="source-row">
                   <SourceTag label="Official pitch facts" source="official" />
@@ -956,6 +1156,76 @@ function GameAudit({
             </div>
           </article>
 
+          <article className="panel evidence-panel">
+            <div className="panel-title">
+              <p className="eyebrow">Pitch-Level Evidence</p>
+              <h3>What changed on the mound.</h3>
+              <p>These are the tracked model inputs for the selected pitch window. Missing values are shown as unavailable rather than estimated.</p>
+            </div>
+            <div className="evidence-grid">
+              <section>
+                <h4>Stuff</h4>
+                <TrendSparkline
+                  label="Fastball velocity"
+                  value={`${fmtNumber(selected.snapshot.release_speed ?? selectedState?.velo_mean_5, 1)} mph`}
+                  detail={`Baseline ${fmtNumber(selectedState?.seasonal_velo_baseline, 1)} · trend ${fmtSigned(selectedState?.velo_slope_5, 2)} mph`}
+                  points={velocityTrend}
+                />
+                <TrendSparkline
+                  label="Fastball spin"
+                  value={`${fmtNumber(selectedState?.spin_mean_5, 0)} rpm`}
+                  detail={`Baseline ${fmtNumber(selectedState?.seasonal_spin_baseline, 0)} · trend ${fmtSigned(selectedState?.spin_slope_5, 0)} rpm`}
+                  points={spinTrend}
+                />
+                <GaugeMetric label="Swinging-strike rate" value={fmtRate(selectedState?.whiff_rate_15)} detail={`Opponent-adjusted change ${fmtSigned(selectedState?.opponent_adjusted_whiff_drop, 2)}`} percent={selectedState?.whiff_rate_15 ?? undefined} tone="gold" />
+                <GaugeMetric label="Pitch mix drift" value={fmtNumber(selectedState?.pitch_mix_drift_10, 2)} detail="How far recent pitch selection has moved from expected mix." percent={scaledPercent(selectedState?.pitch_mix_drift_10, 1)} tone="warn" />
+              </section>
+              <section>
+                <h4>Command and Contact</h4>
+                <GaugeMetric label="Strike rate" value={fmtRate(selectedState?.strike_rate_10)} detail="Last 10 pitches." percent={selectedState?.strike_rate_10 ?? undefined} tone="good" />
+                <GaugeMetric label="Called-strike rate" value={fmtRate(selectedState?.called_strike_rate_15)} detail="Called strikes over the recent command window." percent={selectedState?.called_strike_rate_15 ?? undefined} tone="good" />
+                <GaugeMetric label="Chase rate proxy" value={fmtRate(selectedState?.chase_proxy_rate_15)} detail="Hitters expanding against him." percent={selectedState?.chase_proxy_rate_15 ?? undefined} tone="good" />
+                <GaugeMetric label="Hard contact" value={fmtRate(selectedState?.hard_contact_rate_15)} detail="Recent contact-quality pressure." percent={selectedState?.hard_contact_rate_15 ?? undefined} tone="bad" />
+                <GaugeMetric label="Zone miss" value={`${fmtNumber(selectedState?.zone_miss_distance_10, 2)} ft`} detail={`5-pitch window ${fmtNumber(selectedState?.zone_miss_distance_5, 2)} ft.`} percent={scaledPercent(selectedState?.zone_miss_distance_10, 0.8)} tone="warn" />
+                <GaugeMetric label="Command spread" value={fmtNumber(selectedState?.location_dispersion_10, 2)} detail={`5-pitch spread ${fmtNumber(selectedState?.location_dispersion_5, 2)}.`} percent={scaledPercent(selectedState?.location_dispersion_10, 1.4)} tone="warn" />
+              </section>
+              <section>
+                <h4>Decision Context</h4>
+                <GaugeMetric label="Game leverage" value={fmtNumber(selected.snapshot.leverage_index, 2)} detail={selected.snapshot.leverage_index >= 1.5 ? "High-value game state." : "Lower leverage window."} percent={scaledPercent(selected.snapshot.leverage_index, 3)} tone="gold" />
+                <GaugeMetric label="Normalized degradation" value={fmtRate(selectedState?.normalized_degradation_score)} detail="Normalized against comparable MLB windows." percent={selectedState?.normalized_degradation_score ?? undefined} tone="bad" />
+                <GaugeMetric label="Enhanced degradation" value={fmtNumber(selectedState?.enhanced_degradation_score, 2)} detail="Weighted model read after feature normalization." percent={scaledPercent(selectedState?.enhanced_degradation_score, 3)} tone="bad" />
+                <GaugeMetric label="League percentile" value={fmtRate(selectedState?.empirical_degradation_percentile)} detail={`${selectedState?.empirical_degradation_sample_count ?? "—"} comparable windows.`} percent={selectedState?.empirical_degradation_percentile ?? undefined} tone="gold" />
+                <GaugeMetric label="Pitcher history percentile" value={fmtRate(selectedState?.pitcher_empirical_degradation_percentile)} detail={`${selectedState?.pitcher_empirical_degradation_sample_count ?? "—"} pitcher windows.`} percent={selectedState?.pitcher_empirical_degradation_percentile ?? undefined} tone="gold" />
+                <GaugeMetric label="Decay pressure" value={`${fmtNumber(selectedState?.inning_decay_factor, 2)} inning · ${fmtNumber(selectedState?.tto_decay_factor, 2)} TTO`} detail={`${selectedState?.official_batters_faced_in_game ?? selectedState?.batters_faced_in_game ?? "—"} batters faced.`} percent={scaledPercent((selectedState?.inning_decay_factor ?? 0) + (selectedState?.tto_decay_factor ?? 0), 3)} tone="warn" />
+              </section>
+              <section>
+                <h4>Relief Alternatives</h4>
+                {reliefOptions.length === 0 ? (
+                  <GaugeMetric label="Bullpen options" value={UNAVAILABLE} detail="No relief alternatives were attached to this pitch window." />
+                ) : (
+                  reliefOptions.map((candidate) => (
+                    <GaugeMetric
+                      key={candidate.player_id}
+                      label={candidate.player_name}
+                      value={candidate.available ? "Available" : "Not available"}
+                      detail={`Net option ${fmtNumber(candidate.net_option_score, 2)} · usage cost ${fmtNumber(candidate.usage_cost, 2)} · matchup ${fmtNumber(candidate.direct_matchup_fit, 2)}`}
+                      percent={scaledPercent(candidate.net_option_score, 1)}
+                      tone={candidate.available ? "good" : "neutral"}
+                    />
+                  ))
+                )}
+              </section>
+            </div>
+            {topComponents.length > 0 ? (
+              <div className="component-strip">
+                <span>Top model contributors</span>
+                {topComponents.map(([key, value]) => (
+                  <em key={key}>{featureLabel(key)} {fmtSigned(value, 2)}</em>
+                ))}
+              </div>
+            ) : null}
+          </article>
+
           <article className="panel counterfactual-panel">
             <p className="eyebrow">Decision Explanation</p>
             <h3>What the club should inspect.</h3>
@@ -971,6 +1241,33 @@ function GameAudit({
               <div>
                 <strong>Actual result</strong>
                 <p>{keyPitcher?.runs_allowed_after_signal == null ? "Runs after the first action point are unavailable for this pitcher." : `${keyPitcher.runs_allowed_after_signal} runs scored after the first action point.`}</p>
+              </div>
+            </div>
+          </article>
+
+          <article className="panel recap-panel">
+            <div className="panel-title horizontal">
+              <div>
+                <p className="eyebrow">Game Briefing</p>
+                <h3>Email-ready recap.</h3>
+                <p>Same delivery path as the existing pitching recaps, with this enterprise view summarizing the staff-deployment opportunity first.</p>
+              </div>
+              <button type="button" onClick={handleSendRecapEmail}>
+                Send briefing
+              </button>
+            </div>
+            <div className="recap-briefing">
+              <div>
+                <strong>{team.abbr} pitching summary</strong>
+                <p>{teamPitcherRecapCopy(keyPitcher)}</p>
+              </div>
+              <div>
+                <strong>What to review</strong>
+                <p>{keyPitcher?.missed_hook ? "The model flagged a possible earlier move; use the replay to review the bullpen alternative and game context." : "Review whether the staff decision matched the available bullpen path and game leverage."}</p>
+              </div>
+              <div>
+                <strong>Delivery status</strong>
+                <p>{emailStatus ?? "Use Send briefing to deliver through the configured recap email route for this game and team."}</p>
               </div>
             </div>
           </article>
