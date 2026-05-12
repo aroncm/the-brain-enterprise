@@ -6,6 +6,7 @@ import type {
   PitchingRecapEmailResponse,
   PitchingRecapSettings,
   PitchingReplayResponse,
+  PreventableRunsOpportunitiesPayload,
   RunSavingBoardPayload,
 } from "./types";
 
@@ -68,6 +69,16 @@ export function fetchRunSavingBoard(query: RunSavingBoardQuery = {}): Promise<Ru
   if (query.date) params.set("date", query.date);
   if (query.limit != null) params.set("limit", String(Math.min(query.limit, 50)));
   return fetchJson<RunSavingBoardPayload>(`/v1/enterprise/run-saving/board?${params.toString()}`);
+}
+
+export function fetchPreventableRunsOpportunities(
+  query: { season?: number | string; team?: string; limit?: number } = {},
+): Promise<PreventableRunsOpportunitiesPayload> {
+  const params = new URLSearchParams();
+  if (query.season) params.set("season", String(query.season));
+  if (query.team) params.set("team", query.team);
+  if (query.limit != null) params.set("limit", String(query.limit));
+  return fetchJson<PreventableRunsOpportunitiesPayload>(`/v1/pitching/preventable-runs/opportunities?${params.toString()}`);
 }
 
 export function fetchEnterpriseGames(query: RunSavingBoardQuery = {}): Promise<EnterpriseGamesPayload> {

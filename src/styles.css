@@ -453,6 +453,74 @@ select {
   color: var(--red);
 }
 
+.calibrated-panel {
+  background:
+    linear-gradient(140deg, rgba(198, 162, 67, 0.12), transparent 42%),
+    var(--card);
+}
+
+.calibrated-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.calibrated-metrics .kpi {
+  min-height: 128px;
+  box-shadow: none;
+}
+
+.calibrated-list {
+  display: grid;
+  gap: 10px;
+}
+
+.calibrated-row {
+  display: grid;
+  grid-template-columns: 1.05fr 1.2fr 0.85fr 0.75fr 1.1fr;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 16px;
+}
+
+.calibrated-row strong,
+.calibrated-row span {
+  display: block;
+}
+
+.calibrated-row strong {
+  color: var(--navy);
+}
+
+.calibrated-row span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.driver-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.driver-chip {
+  margin-top: 0 !important;
+  border-radius: 999px;
+  background: var(--gold-soft);
+  color: var(--navy-2) !important;
+  padding: 6px 9px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px !important;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .opportunity-table {
   display: grid;
   gap: 8px;
@@ -950,9 +1018,14 @@ select {
 
   .workflow-nav,
   .kpi-row,
+  .calibrated-metrics,
   .audit-summary-grid,
   .counterfactual-grid,
   .profile-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .calibrated-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -969,6 +1042,8 @@ select {
 
   .workflow-nav,
   .kpi-row,
+  .calibrated-metrics,
+  .calibrated-row,
   .audit-summary-grid,
   .counterfactual-grid,
   .profile-board,

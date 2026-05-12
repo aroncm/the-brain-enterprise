@@ -6,6 +6,7 @@ import {
   fetchPitchingAuditSummary,
   fetchPitchingRecap,
   fetchPitchingReplay,
+  fetchPreventableRunsOpportunities,
   fetchRunSavingBoard,
   getConfiguredApiBase,
 } from "./api";
@@ -21,6 +22,8 @@ import type {
   PitchingGameRecap,
   PitchingReplayEntry,
   PitchingReplayResponse,
+  PreventableRunsOpportunityRow,
+  PreventableRunsOpportunitiesPayload,
   RunSavingBoardPayload,
   TripleAConversionCandidate,
 } from "./types";
@@ -153,6 +156,32 @@ function normalize(value: string | null | undefined): string {
     .toLowerCase()
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function featureLabel(value: string | null | undefined): string {
+  if (!value) return "Model driver";
+  const labels: Record<string, string> = {
+    base_traffic: "Base traffic",
+    leverage: "Leverage",
+    leveraged_production_degradation: "Leveraged production degradation",
+    pitch_count_norm: "Pitch count",
+    tto: "Times through order",
+    inning_norm: "Inning",
+    degradation_score: "Degradation",
+    decay_velocity: "Decay velocity",
+    decay_acceleration: "Decay acceleration",
+    batter_quality: "Batter quality",
+    inning_pitcher_penalty: "Inning-specific pitcher penalty",
+    tto_pitcher_penalty: "TTO-specific pitcher penalty",
+  };
+  return labels[value] ?? normalize(value);
+}
+
+function formatDateText(value: string | null | undefined): string {
+  if (!value) return "Date unavailable";
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function pitchName(value: string | null | undefined): string {
@@ -437,9 +466,78 @@ function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"
   return { loadState, payload, error, reload: load };
 }
 
+function usePreventableRunsOpportunities({ season, team, limit }: { season: string; team: string; limit: number }) {
+  const [payload, setPayload] = useState<PreventableRunsOpportunitiesPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchPreventableRunsOpportunities({ season, team, limit });
+      setPayload(data);
+    } catch (caught) {
+      setPayload(null);
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }, [season, team, limit]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return { payload, error, loading, reload: load };
+}
+
+function CalibratedOpportunityRow({ row }: { row: PreventableRunsOpportunityRow }) {
+  const topDrivers = row.topFeatures
+    .filter((feature) => typeof feature.contribution === "number" && feature.contribution > 0)
+    .slice(0, 3);
+  const half = row.half ? normalize(row.half) : "Half unavailable";
+  const context = `Inn ${row.inning ?? "—"} · ${half} · ${row.outs ?? "—"} out · Bases ${row.baseState ?? "—"}`;
+
+  return (
+    <div className="calibrated-row">
+      <div>
+        <strong>{row.pitcherName}</strong>
+        <span>{row.team} vs {row.opponent} · {formatDateText(row.gameDate)}</span>
+      </div>
+      <div>
+        <strong>{context}</strong>
+        <span>PC {row.pitchCount ?? "—"} · LI {fmtNumber(row.leverageIndex, 2)} · Deg {fmtNumber(row.degradationScore, 2)}</span>
+      </div>
+      <div>
+        <strong>{fmtRuns(row.projectedPreventableRuns)} runs</strong>
+        <span>Damage probability {fmtPct(row.projectedDamageProbability)}</span>
+      </div>
+      <div>
+        <strong>{row.calibrationSampleCount?.toLocaleString() ?? UNAVAILABLE}</strong>
+        <span>Comparable MLB windows</span>
+      </div>
+      <div className="driver-list">
+        {topDrivers.length === 0 ? (
+          <span className="driver-chip">Drivers unavailable</span>
+        ) : (
+          topDrivers.map((feature) => (
+            <span key={feature.feature} className="driver-chip">
+              {featureLabel(feature.feature)}
+            </span>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CommandCenter({
   team,
   payload,
+  preventableRuns,
+  preventableRunsError,
+  preventableRunsLoading,
   profiles,
   audits,
   auditSummary,
@@ -448,6 +546,9 @@ function CommandCenter({
 }: {
   team: Team;
   payload: RunSavingBoardPayload;
+  preventableRuns: PreventableRunsOpportunitiesPayload | null;
+  preventableRunsError: string | null;
+  preventableRunsLoading: boolean;
   profiles: PitcherProfile[];
   audits: AuditRow[];
   auditSummary: PitchingAuditSummaryPayload | null;
@@ -456,6 +557,11 @@ function CommandCenter({
 }) {
   const seasonRuns = sum(profiles.map((profile) => profile.projectedRunsSaved));
   const boardRuns = sum(payload.decisions.map((decision) => decision.projectedRunsSaved));
+  const calibratedSummary = preventableRuns?.summary ?? null;
+  const calibratedRows = preventableRuns?.rows ?? [];
+  const calibratedRuns =
+    calibratedSummary?.totalProjectedPreventableRuns ?? sum(calibratedRows.map((row) => row.projectedPreventableRuns));
+  const displayedRuns = calibratedSummary || calibratedRows.length > 0 ? calibratedRuns : seasonRuns || boardRuns;
   const windows = auditWindows(auditSummary);
   const bestOption = bullpenOptions.slice().sort((a, b) => (b.netOptionScore ?? -Infinity) - (a.netOptionScore ?? -Infinity))[0] ?? null;
   const decisionMatrix = payload.decisions.reduce(
@@ -506,6 +612,7 @@ function CommandCenter({
     .sort((a, b) => (b.runs ?? -Infinity) - (a.runs ?? -Infinity) || b.severity - a.severity)
     .slice(0, 8);
   const topProfile = profiles.slice().sort((a, b) => (b.projectedRunsSaved ?? -Infinity) - (a.projectedRunsSaved ?? -Infinity))[0] ?? null;
+  const topCalibratedRows = calibratedRows.slice(0, 6);
 
   return (
     <section className="workflow">
@@ -521,11 +628,57 @@ function CommandCenter({
       </div>
 
       <div className="kpi-row">
-        <KPI label="Season Preventable Runs" value={fmtRuns(seasonRuns || boardRuns)} detail="Calibrated model estimate across covered club pitcher windows." tone="gold" />
+        <KPI label="Season Preventable Runs" value={fmtRuns(displayedRuns)} detail="Calibrated model estimate across covered club pitcher windows." tone="gold" />
         <KPI label="High-Value Audit Cases" value={String(opportunityRows.length)} detail="Ranked windows with manager decision context and run impact." tone="bad" />
         <KPI label="Tandem Opportunity Cases" value={String(auditMatrix.tandem || decisionMatrix.tandem)} detail="Hurting starter with a stronger relief alternative." tone="bad" />
         <KPI label="Pitchers Covered" value={String(profiles.length)} detail={`${payload.summary.sourceGameCount ?? 0} source games in the current board.`} />
       </div>
+
+      <article className="panel calibrated-panel">
+        <div className="panel-title horizontal">
+          <div>
+            <p className="eyebrow">Calibrated Preventable Runs</p>
+            <h3>New live-state model output now powering the club opportunity view.</h3>
+            <p>
+              This is the calibrated damage model: exact inning, outs, base state, pitcher degradation, decay trajectory, batter context, leverage, and empirical MLB damage rates.
+            </p>
+          </div>
+          <SourceTag label={preventableRuns?.status === "available" ? "Model artifact ready" : preventableRunsLoading ? "Loading model" : "Model unavailable"} source={preventableRuns?.status === "available" ? "model" : "unavailable"} />
+        </div>
+        {preventableRunsLoading ? (
+          <EmptyState title="Loading calibrated opportunities" detail="Retrieving the current preventable-runs artifact from the Baseball brAIn API." />
+        ) : preventableRunsError ? (
+          <EmptyState title="Calibrated opportunity source unavailable" detail={preventableRunsError} />
+        ) : topCalibratedRows.length === 0 ? (
+          <EmptyState title="No calibrated opportunities returned" detail="The model endpoint is reachable, but no rows matched this club and season." />
+        ) : (
+          <>
+            <div className="calibrated-metrics">
+              <KPI
+                label="Covered Windows"
+                value={String(calibratedSummary?.windowCount ?? preventableRuns?.rowCount ?? topCalibratedRows.length)}
+                detail="Pitch-level windows eligible for calibrated damage scoring."
+              />
+              <KPI
+                label="Avg Damage Probability"
+                value={fmtPct(calibratedSummary?.avgProjectedDamageProbability)}
+                detail="Mean probability of damage in the scored windows."
+                tone="bad"
+              />
+              <KPI
+                label="Actual Damage Rate"
+                value={fmtPct(calibratedSummary?.damageRate)}
+                detail={`${calibratedSummary?.missedHookDamageCount ?? 0} missed-hook damage windows in the source artifact.`}
+              />
+            </div>
+            <div className="calibrated-list">
+              {topCalibratedRows.map((row) => (
+                <CalibratedOpportunityRow key={`${row.gameId}-${row.pitcherId ?? row.pitcherName}-${row.pitchCount ?? row.inning}`} row={row} />
+              ))}
+            </div>
+          </>
+        )}
+      </article>
 
       <div className="two-column">
         <article className="panel matrix-panel">
@@ -955,6 +1108,12 @@ export default function App() {
   const selectedTeam = MLB_TEAMS.find((team) => team.abbr === selectedTeamAbbr) ?? MLB_TEAMS[0];
   const { loadState, payload, error, reload } = useRunSavingBoard({ league: "mlb", team: selectedTeam.abbr, limit: 50 });
   const { payload: tripleAPayload, reload: reloadTripleA } = useRunSavingBoard({ league: "triple_a", limit: 50 });
+  const {
+    payload: preventableRuns,
+    error: preventableRunsError,
+    loading: preventableRunsLoading,
+    reload: reloadPreventableRuns,
+  } = usePreventableRunsOpportunities({ season, team: selectedTeam.abbr, limit: 75 });
   const apiBase = getConfiguredApiBase();
 
   useEffect(() => {
@@ -1025,6 +1184,7 @@ export default function App() {
   function refreshAll() {
     void reload();
     void reloadTripleA();
+    void reloadPreventableRuns();
   }
 
   return (
@@ -1060,6 +1220,9 @@ export default function App() {
         <CommandCenter
           team={selectedTeam}
           payload={payload}
+          preventableRuns={preventableRuns}
+          preventableRunsError={preventableRunsError}
+          preventableRunsLoading={preventableRunsLoading}
           profiles={profiles}
           audits={audits}
           auditSummary={auditSummary}

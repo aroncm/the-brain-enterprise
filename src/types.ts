@@ -138,6 +138,77 @@ export type RunSavingBoardPayload = {
   };
 };
 
+export type PreventableRunsFeatureContribution = {
+  feature: string;
+  value: number | null;
+  weight: number | null;
+  contribution: number | null;
+};
+
+export type PreventableRunsOpportunityRow = {
+  gameId: string;
+  gameDate: string | null;
+  team: string;
+  opponent: string;
+  pitcherId: string | null;
+  pitcherName: string;
+  inning: number | null;
+  half: string | null;
+  outs: number | null;
+  baseState: string | null;
+  pitchCount: number | null;
+  status: string | null;
+  damageRunsNext6Outs: number | null;
+  projectedDamageProbability: number | null;
+  projectedPreventableRuns: number | null;
+  calibrationBucket: string | null;
+  calibrationSampleCount: number | null;
+  calibrationMeanDamage: number | null;
+  calibrationConfidence: number | null;
+  leverageIndex: number | null;
+  degradationScore: number | null;
+  decayVelocity: number | null;
+  decayAcceleration: number | null;
+  topFeatures: PreventableRunsFeatureContribution[];
+};
+
+export type PreventableRunsTeamSummary = {
+  team: string;
+  windowCount: number;
+  totalProjectedPreventableRuns: number;
+  avgProjectedPreventableRuns: number;
+  avgProjectedDamageProbability: number;
+  actualPreventableRunsProxy: number | null;
+  damageRate: number | null;
+  missedHookDamageCount: number;
+};
+
+export type PreventableRunsPitcherSummary = {
+  team: string;
+  pitcherId: string | null;
+  pitcherName: string;
+  windowCount: number;
+  totalProjectedPreventableRuns: number;
+  avgProjectedPreventableRuns: number;
+  avgProjectedDamageProbability: number;
+  actualPreventableRunsProxy: number | null;
+  damageRate: number | null;
+};
+
+export type PreventableRunsOpportunitiesPayload = {
+  status: "available" | "unavailable" | string;
+  generatedAt: string | null;
+  season: number | null;
+  team: string | null;
+  rowCount: number;
+  sourceRows: number | null;
+  source: string | null;
+  summary: PreventableRunsTeamSummary | null;
+  teamSummaries: PreventableRunsTeamSummary[];
+  pitcherSummaries: PreventableRunsPitcherSummary[];
+  rows: PreventableRunsOpportunityRow[];
+};
+
 export type EnterpriseGameSummary = {
   game_id: string;
   date: string;
