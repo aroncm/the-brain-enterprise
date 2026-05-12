@@ -484,7 +484,16 @@ select {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.78);
+  color: var(--navy);
   padding: 16px;
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.calibrated-row:hover {
+  border-color: rgba(17, 26, 45, 0.32);
+  box-shadow: 0 12px 32px rgba(17, 26, 45, 0.08);
+  transform: translateY(-1px);
 }
 
 .calibrated-row strong,
