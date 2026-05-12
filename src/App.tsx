@@ -500,6 +500,7 @@ function CalibratedOpportunityRow({ row }: { row: PreventableRunsOpportunityRow 
   const half = row.half ? normalize(row.half) : "Half unavailable";
   const context = `Inn ${row.inning ?? "—"} · ${half} · ${row.outs ?? "—"} out · Bases ${row.baseState ?? "—"}`;
   const normalizedDegPct = row.normalizedDegradation == null ? UNAVAILABLE : fmtPct(row.normalizedDegradation);
+  const priority = Math.round((row.calibratedPreventableSignal ?? row.projectedDamageProbability ?? 0) * 100);
 
   return (
     <div className="calibrated-row">
@@ -512,12 +513,12 @@ function CalibratedOpportunityRow({ row }: { row: PreventableRunsOpportunityRow 
         <span>PC {row.pitchCount ?? "—"} · LI {fmtNumber(row.leverageIndex, 2)} · Prod deg {fmtNumber(row.productionDegradation ?? row.degradationScore, 2)} · Norm {normalizedDegPct}</span>
       </div>
       <div>
-        <strong>{fmtRuns(row.projectedPreventableRuns)} runs</strong>
-        <span>Damage {fmtPct(row.projectedDamageProbability)} · next pocket {fmtRuns(row.projectedRunsThroughNextPocket)}</span>
+        <strong>{priority} priority</strong>
+        <span>Preventable band {fmtRuns(row.projectedPreventableRuns)} · signal {fmtNumber(row.calibratedPreventableSignal, 2)}</span>
       </div>
       <div>
-        <strong>{row.calibrationSampleCount?.toLocaleString() ?? UNAVAILABLE}</strong>
-        <span>Bucket {row.calibrationBucket ?? "—"} · signal {fmtNumber(row.calibratedPreventableSignal, 2)}</span>
+        <strong>{fmtPct(row.projectedDamageProbability)} risk</strong>
+        <span>Next pocket {fmtRuns(row.projectedRunsThroughNextPocket)} · bucket {row.calibrationBucket ?? "—"} · n={row.calibrationSampleCount?.toLocaleString() ?? "—"}</span>
       </div>
       <div className="driver-list">
         {topDrivers.length === 0 ? (
@@ -532,6 +533,33 @@ function CalibratedOpportunityRow({ row }: { row: PreventableRunsOpportunityRow 
       </div>
     </div>
   );
+}
+
+function calibratedOpportunityKey(row: PreventableRunsOpportunityRow): string {
+  return [
+    row.gameId,
+    row.pitcherId ?? row.pitcherName,
+    row.inning ?? "inning",
+    row.half ?? "half",
+    row.outs ?? "outs",
+    row.baseState ?? "bases",
+  ].join("|");
+}
+
+function calibratedPriorityValue(row: PreventableRunsOpportunityRow): number {
+  return row.calibratedPreventableSignal ?? row.projectedDamageProbability ?? row.projectedPreventableRuns ?? 0;
+}
+
+function collapseCalibratedOpportunityWindows(rows: PreventableRunsOpportunityRow[]): PreventableRunsOpportunityRow[] {
+  const bestByWindow = new Map<string, PreventableRunsOpportunityRow>();
+  for (const row of rows) {
+    const key = calibratedOpportunityKey(row);
+    const existing = bestByWindow.get(key);
+    if (!existing || calibratedPriorityValue(row) > calibratedPriorityValue(existing)) {
+      bestByWindow.set(key, row);
+    }
+  }
+  return Array.from(bestByWindow.values()).sort((a, b) => calibratedPriorityValue(b) - calibratedPriorityValue(a));
 }
 
 function CommandCenter({
@@ -614,7 +642,7 @@ function CommandCenter({
     .sort((a, b) => (b.runs ?? -Infinity) - (a.runs ?? -Infinity) || b.severity - a.severity)
     .slice(0, 8);
   const topProfile = profiles.slice().sort((a, b) => (b.projectedRunsSaved ?? -Infinity) - (a.projectedRunsSaved ?? -Infinity))[0] ?? null;
-  const topCalibratedRows = calibratedRows.slice(0, 6);
+  const topCalibratedRows = collapseCalibratedOpportunityWindows(calibratedRows).slice(0, 6);
 
   return (
     <section className="workflow">
