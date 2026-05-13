@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiConfigurationError,
   fetchEnterpriseGames,
   fetchPitcherProfiles,
   fetchPitchingAuditSummary,
   fetchPitchingRecap,
+  fetchPitchingRecapSettings,
   fetchPitchingReplay,
   fetchPreventableRunsOpportunities,
   fetchRunSavingBoard,
   getConfiguredApiBase,
   sendPitchingRecapEmail,
+  savePitchingRecapSettings,
 } from "./api";
 import type {
   AuditRow,
@@ -22,6 +24,7 @@ import type {
   PitchingAuditWindow,
   PitchingGameRecap,
   PitchingRecapPitcher,
+  PitchingRecapSettings,
   PitchingReplayEntry,
   PitchingReplayResponse,
   PreventableRunsOpportunityRow,
@@ -31,7 +34,7 @@ import type {
 } from "./types";
 
 type LoadState = "loading" | "ready" | "error" | "missing-config";
-type Workflow = "command" | "audit" | "allocation" | "roster";
+type Workflow = "command" | "audit" | "allocation" | "roster" | "briefings";
 type Team = { abbr: string; name: string; club: string; division: string };
 type MatrixCell = "standard" | "tandem" | "push" | "workload";
 
@@ -109,6 +112,7 @@ const WORKFLOWS: Array<{ id: Workflow; label: string; question: string }> = [
   { id: "audit", label: "Game Audit", question: "What happened pitch by pitch?" },
   { id: "allocation", label: "Pitcher Allocation", question: "How should we deploy the staff?" },
   { id: "roster", label: "Roster Construction", question: "What staff gaps should we solve?" },
+  { id: "briefings", label: "Briefings", question: "Who receives postgame intelligence?" },
 ];
 
 const PITCH_TYPE_NAMES: Record<string, string> = {
@@ -336,6 +340,196 @@ function num(value: unknown): number | null {
   return null;
 }
 
+function looseNumber(source: unknown, keys: string[]): number | null {
+  const sourceRecord = record(source);
+  for (const key of keys) {
+    const value = num(sourceRecord[key]);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function featureCategory(feature: string): "Stuff" | "Command and Contact" | "Decision Context" | "Relief Alternative" {
+  const key = feature.toLowerCase();
+  if (key.includes("relief") || key.includes("bullpen") || key.includes("candidate") || key.includes("option")) return "Relief Alternative";
+  if (key.includes("leverage") || key.includes("inning") || key.includes("tto") || key.includes("base") || key.includes("pitch_count") || key.includes("batter")) return "Decision Context";
+  if (key.includes("command") || key.includes("zone") || key.includes("strike") || key.includes("contact") || key.includes("location") || key.includes("chase")) return "Command and Contact";
+  return "Stuff";
+}
+
+function categoryContributorLabel(feature: string): string {
+  return `${featureCategory(feature)}: ${featureLabel(feature)}`;
+}
+
+function opportunityForPitch(
+  entry: PitchingReplayEntry | null,
+  opportunities: PreventableRunsOpportunityRow[],
+  selectedGameId: string | null,
+): PreventableRunsOpportunityRow | null {
+  if (!entry || !selectedGameId) return null;
+  const gameRows = opportunities.filter((row) => row.gameId === selectedGameId);
+  if (gameRows.length === 0) return null;
+  const pitcherRows = gameRows.filter((row) => {
+    if (row.pitcherId && String(row.pitcherId) === String(entry.snapshot.pitcher_id)) return true;
+    return row.pitcherName === entry.snapshot.pitcher_name;
+  });
+  const rows = pitcherRows.length ? pitcherRows : gameRows;
+  const currentPitch = pitchCount(entry);
+  return rows
+    .slice()
+    .sort((left, right) => {
+      const leftDistance = left.pitchCount == null ? Number.POSITIVE_INFINITY : Math.abs(left.pitchCount - currentPitch);
+      const rightDistance = right.pitchCount == null ? Number.POSITIVE_INFINITY : Math.abs(right.pitchCount - currentPitch);
+      return leftDistance - rightDistance;
+    })[0] ?? null;
+}
+
+function preventableRunsForPitch(entry: PitchingReplayEntry | null, opportunity: PreventableRunsOpportunityRow | null): number | null {
+  if (!entry) return null;
+  return (
+    opportunity?.projectedPreventableRuns ??
+    opportunity?.decisionDelta ??
+    looseNumber(entry.recommendation, [
+      "projectedPreventableRuns",
+      "projected_preventable_runs",
+      "preventableRuns",
+      "preventable_runs",
+      "calibratedPreventableRuns",
+      "calibrated_preventable_runs",
+      "projectedRunsSaved",
+      "projected_runs_saved",
+      "estimatedRunsSaved",
+      "estimated_runs_saved",
+    ])
+  );
+}
+
+function parseCsvList(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function teamCsv(value: string): string[] {
+  return parseCsvList(value).map((item) => item.toUpperCase());
+}
+
+function csvHasTeam(value: string, team: string): boolean {
+  return teamCsv(value).includes(team.toUpperCase());
+}
+
+function csvSetTeam(value: string, team: string, enabled: boolean): string {
+  const normalizedTeam = team.toUpperCase();
+  const current = teamCsv(value);
+  const next = current.filter((item) => item !== normalizedTeam);
+  if (enabled) next.push(normalizedTeam);
+  return Array.from(new Set(next)).join(", ");
+}
+
+function actionPointCopy(pitcher: PitchingRecapPitcher | null): string {
+  if (!pitcher) return "No starter action point was generated for this game.";
+  if (pitcher.first_pull_now_inning != null) {
+    return `Pull Now triggered in the ${ordinal(pitcher.first_pull_now_inning)} at pitch ${pitcher.first_pull_now_pitch_count ?? "—"}.`;
+  }
+  if (pitcher.first_alert_inning != null) {
+    return `${statusLabel(pitcher.first_alert_status)} triggered in the ${ordinal(pitcher.first_alert_inning)} at pitch ${pitcher.first_alert_pitch_count ?? "—"}.`;
+  }
+  return "No model action point was generated for this starter.";
+}
+
+function exitAndDamageCopy(pitcher: PitchingRecapPitcher | null): string {
+  if (!pitcher) return "Actual exit timing and scoring are unavailable.";
+  const exit =
+    pitcher.actual_exit_inning == null
+      ? "Actual pull timing unavailable"
+      : `Starter was pulled in the ${ordinal(pitcher.actual_exit_inning)} at pitch ${pitcher.actual_exit_pitch_count ?? "—"}`;
+  const runs =
+    pitcher.runs_allowed_after_signal == null
+      ? "runs after the model signal unavailable"
+      : `${pitcher.runs_allowed_after_signal} run${pitcher.runs_allowed_after_signal === 1 ? "" : "s"} scored after the model signal`;
+  const pitchesAfter = looseNumber(pitcher, ["pitches_after_signal", "pitchesAfterSignal"]);
+  const battersAfter = looseNumber(pitcher, ["batters_after_signal", "battersAfterSignal"]);
+  const hold =
+    pitchesAfter != null || battersAfter != null
+      ? ` Manager held him ${pitchesAfter != null ? `${pitchesAfter} pitch${pitchesAfter === 1 ? "" : "es"}` : ""}${pitchesAfter != null && battersAfter != null ? " / " : ""}${battersAfter != null ? `${battersAfter} batter${battersAfter === 1 ? "" : "s"}` : ""} after the signal.`
+      : "";
+  return `${exit}; ${runs}.${hold}`;
+}
+
+function pullWindowMetrics(entry: PitchingReplayEntry | null): { stuff: string; decay: string; degradation: string } {
+  if (!entry) {
+    return { stuff: UNAVAILABLE, decay: UNAVAILABLE, degradation: UNAVAILABLE };
+  }
+  const state = entry.snapshot.starter_state;
+  const decay = (state.inning_decay_factor ?? 0) + (state.tto_decay_factor ?? 0);
+  return {
+    stuff: `${stuffScore(entry)}/100`,
+    decay: fmtNumber(decay, 2),
+    degradation: fmtNumber(state.enhanced_degradation_score ?? state.degradation_score, 2),
+  };
+}
+
+function relieverRssLabel(pitcher: PitchingRecapPitcher): string {
+  if (pitcher.rss_score == null) return UNAVAILABLE;
+  return `${statusLabel(pitcher.rss_label)} ${fmtNumber(pitcher.rss_score, 2)}`;
+}
+
+function relieverRssTimingCopy(pitcher: PitchingRecapPitcher): string {
+  if (pitcher.first_alert_inning == null) {
+    return pitcher.rss_score == null
+      ? "No RSS score was returned for this appearance."
+      : "RSS was measured for the appearance; pitch-level trigger timing was not reconstructed.";
+  }
+  return `${statusLabel(pitcher.first_alert_status)} in the ${ordinal(pitcher.first_alert_inning)} at pitch ${pitcher.first_alert_pitch_count ?? "—"}.`;
+}
+
+function relieverOutcomeCopy(pitcher: PitchingRecapPitcher): string {
+  const runs = pitcher.runs_allowed_total == null ? "runs unavailable" : `${pitcher.runs_allowed_total} R`;
+  const innings = pitcher.innings_pitched == null ? "IP unavailable" : `${fmtNumber(pitcher.innings_pitched, 1)} IP`;
+  const exit =
+    pitcher.actual_exit_inning == null
+      ? "exit timing unavailable"
+      : `exited in the ${ordinal(pitcher.actual_exit_inning)} at pitch ${pitcher.actual_exit_pitch_count ?? "—"}`;
+  const after =
+    pitcher.runs_allowed_after_first_alert == null
+      ? "Runs after RSS trigger unavailable because pitch-level timing is unavailable."
+      : `${pitcher.runs_allowed_after_first_alert} run${pitcher.runs_allowed_after_first_alert === 1 ? "" : "s"} after RSS trigger.`;
+  return `${runs} in ${innings}; ${exit}. ${after}`;
+}
+
+function entryEventLabel(
+  selected: PitchingReplayEntry,
+  previous: PitchingReplayEntry | null,
+  displayStatus: string,
+  previousStatus: string,
+  replay: PitchingReplayResponse,
+): { title: string; detail: string; tone: "neutral" | "gold" | "bad" } {
+  const scoreChanged =
+    previous != null &&
+    (selected.snapshot.home_score !== previous.snapshot.home_score || selected.snapshot.away_score !== previous.snapshot.away_score);
+  const signalAdvanced = previous != null && statusRank(displayStatus) > statusRank(previousStatus);
+  if (scoreChanged) {
+    return {
+      title: "Score changed",
+      detail: `The game moved to ${scoreForEntry(selected, replay)} after this sequence.`,
+      tone: "bad",
+    };
+  }
+  if (signalAdvanced) {
+    return {
+      title: `Signal advanced to ${displayStatus}`,
+      detail: `The model moved up because the combined mound evidence and game context crossed the ${displayStatus.toLowerCase()} threshold.`,
+      tone: statusRank(displayStatus) >= statusRank("PULL NOW") ? "bad" : "gold",
+    };
+  }
+  return {
+    title: "Current pitch window",
+    detail: `${selected.snapshot.pitcher_name} at pitch ${pitchCount(selected)} in the ${halfInningLabel(selected.snapshot.half, selected.snapshot.inning)}.`,
+    tone: "neutral",
+  };
+}
+
 function matrixCellForDecision(decision: PitcherDecision, bestOption: BullpenOption | null): MatrixCell {
   const lateStuff = avg(decision.stuffCurve.slice(-2));
   const starterAbove = (lateStuff ?? 50) >= 55 && (decision.cliffProbability ?? 0.5) < 0.6;
@@ -542,6 +736,38 @@ function PitchPlot({ entries, selectedIndex }: { entries: PitchingReplayEntry[];
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function SignalTimeline({
+  entries,
+  statuses,
+  selectedIndex,
+  onSelect,
+}: {
+  entries: PitchingReplayEntry[];
+  statuses: string[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <div className="signal-timeline" aria-label="Pitch-by-pitch signal timeline">
+      {entries.map((entry, index) => {
+        const status = statuses[index] ?? statusLabel(entry.recommendation.status);
+        const selected = index === selectedIndex;
+        return (
+          <button
+            key={`${entry.snapshot.pitch_id}-${index}`}
+            type="button"
+            className={`timeline-segment timeline-${signalClass(status)}${selected ? " selected" : ""}`}
+            title={`Pitch ${pitchCount(entry)} · ${status}`}
+            aria-label={`Pitch ${pitchCount(entry)} signal ${status}`}
+            onClick={() => onSelect(index)}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -1002,6 +1228,7 @@ function GameAudit({
   onGameChange,
   replay,
   recap,
+  preventableRows,
 }: {
   team: Team;
   games: EnterpriseGameSummary[];
@@ -1009,8 +1236,10 @@ function GameAudit({
   onGameChange: (id: string) => void;
   replay: PitchingReplayResponse | null;
   recap: PitchingGameRecap | null;
+  preventableRows: PreventableRunsOpportunityRow[];
 }) {
   const [pitchIndex, setPitchIndex] = useState(0);
+  const [autoplay, setAutoplay] = useState(false);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const entries = useMemo(
     () => (replay?.entries ?? []).filter((entry) => entry.snapshot.fielding_team === team.abbr).sort((a, b) => pitchCount(a) - pitchCount(b)),
@@ -1020,12 +1249,36 @@ function GameAudit({
   const displayStatuses = useMemo(() => monotonicStatuses(entries), [entries]);
   const selected = entries[selectedIndex] ?? null;
   const displayStatus = selected ? displayStatuses[selectedIndex] ?? statusLabel(selected.recommendation.status) : "STAY";
+  const previous = selectedIndex > 0 ? entries[selectedIndex - 1] ?? null : null;
+  const previousStatus = selectedIndex > 0 ? displayStatuses[selectedIndex - 1] ?? "STAY" : "STAY";
   const selectedGame = games.find((game) => game.game_id === selectedGameId) ?? games[0] ?? null;
   const teamPitchers = selectedTeamPitchers(recap, team);
-  const keyPitcher = teamPitchers.find((pitcher) => pitcher.first_pull_now_inning != null || pitcher.first_alert_inning != null) ?? teamPitchers[0] ?? null;
+  const teamStarters = teamPitchers.filter((pitcher) => statusLabel(pitcher.role) !== "RELIEVER");
+  const teamRelievers = teamPitchers.filter((pitcher) => statusLabel(pitcher.role) === "RELIEVER");
+  const keyPitcher = teamStarters.find((pitcher) => pitcher.first_pull_now_inning != null || pitcher.first_alert_inning != null) ?? teamStarters[0] ?? teamPitchers[0] ?? null;
   const pullIndex = displayStatuses.findIndex((status) => statusRank(status) >= statusRank("PULL NOW"));
+  const pullEntry = pullIndex >= 0 ? entries[pullIndex] ?? null : null;
+  const pullMetrics = pullWindowMetrics(pullEntry);
+  const pullBestCandidate = pullEntry?.top_candidates?.find((candidate) => candidate.available) ?? pullEntry?.top_candidates?.[0] ?? null;
+  const pullDecisionDelta = pullEntry?.recommendation.decision_delta ?? selected?.recommendation.decision_delta ?? null;
+  const hasWatchSignal = statusRank(displayStatus) >= statusRank("WATCH");
   const bestCandidate = selected?.top_candidates?.find((candidate) => candidate.available) ?? selected?.top_candidates?.[0] ?? null;
   const selectedState = selected?.snapshot.starter_state ?? null;
+  const selectedOpportunity = opportunityForPitch(selected, preventableRows, selectedGameId);
+  const selectedPreventableRuns = preventableRunsForPitch(selected, selectedOpportunity);
+  const eventLabel = selected && replay ? entryEventLabel(selected, previous, displayStatus, previousStatus, replay) : null;
+  const degradationPressure = selectedState?.normalized_degradation_score ?? scaledPercent(selectedState?.enhanced_degradation_score ?? selectedState?.degradation_score, 3);
+  const commandPressure = Math.max(
+    scaledPercent(selectedState?.zone_miss_distance_10, 0.8),
+    scaledPercent(selectedState?.location_dispersion_10, 1.4),
+    scaledPercent(selectedState?.ball_rate_10, 1),
+  );
+  const stuffPressure = Math.max(
+    scaledPercent(Math.abs(selected ? velocityDrop(selected) ?? 0 : 0), 4),
+    scaledPercent(Math.abs(selectedState?.spin_slope_5 ?? 0), 250),
+    scaledPercent(Math.abs(selectedState?.pitch_mix_drift_10 ?? 0), 1),
+  );
+  const decayPressure = scaledPercent((selectedState?.inning_decay_factor ?? 0) + (selectedState?.tto_decay_factor ?? 0), 3);
   const topComponents = Object.entries(selectedState?.component_contributions ?? {})
     .sort((a, b) => Math.abs(b[1] ?? 0) - Math.abs(a[1] ?? 0))
     .slice(0, 5);
@@ -1046,8 +1299,25 @@ function GameAudit({
 
   useEffect(() => {
     setPitchIndex(0);
+    setAutoplay(false);
     setEmailStatus(null);
   }, [selectedGameId]);
+
+  useEffect(() => {
+    if (!autoplay || entries.length <= 1) return;
+    const interval = window.setInterval(() => {
+      setPitchIndex((current) => {
+        const next = Math.min(entries.length - 1, current + 1);
+        if (next === current) window.clearInterval(interval);
+        return next;
+      });
+    }, 850);
+    return () => window.clearInterval(interval);
+  }, [autoplay, entries.length]);
+
+  useEffect(() => {
+    if (selectedIndex >= entries.length - 1) setAutoplay(false);
+  }, [entries.length, selectedIndex]);
 
   async function handleSendRecapEmail() {
     if (!selectedGameId) return;
@@ -1085,28 +1355,16 @@ function GameAudit({
         <EmptyState title="No replay loaded" detail="Select a completed game with finalized pitch-level replay detail." />
       ) : (
         <>
-          <div className="audit-summary-grid">
-            <KPI
-              label="Key Window"
-              value={keyPitcher?.first_pull_now_inning != null ? `${ordinal(keyPitcher.first_pull_now_inning)} inning, pitch ${keyPitcher.first_pull_now_pitch_count}` : UNAVAILABLE}
-              detail={keyPitcher ? `${keyPitcher.pitcher_name} reached ${statusLabel(keyPitcher.peak_status)}.` : "No action window returned."}
-              tone="gold"
-            />
-            <KPI
-              label="Actual Result"
-              value={keyPitcher?.runs_allowed_after_signal == null ? UNAVAILABLE : `${keyPitcher.runs_allowed_after_signal} runs`}
-              detail={keyPitcher?.missed_hook ? "Signal was not acted on immediately." : "Observed after the first model action point."}
-              tone={keyPitcher?.missed_hook ? "bad" : "neutral"}
-            />
-            <KPI label="Best Alternative Now" value={bestCandidate?.player_name || UNAVAILABLE} detail={bestCandidate ? `Usage cost ${fmtNumber(bestCandidate.usage_cost, 2)} · net option ${fmtNumber(bestCandidate.net_option_score, 2)}` : "No candidate attached to this pitch."} />
-            <KPI label="Current Signal" value={displayStatus} detail={`Pitch ${pitchCount(selected)} · ${gameSituationLabel(selected)}`} />
-          </div>
-
           <article className="panel replay-panel">
             <div className={`signal-banner signal-${signalClass(displayStatus)}`}>
               <strong>{displayStatus}</strong>
-              <span>{selected.snapshot.pitcher_name} · {gameSituationLabel(selected)} · LI {fmtNumber(selected.snapshot.leverage_index, 2)}</span>
             </div>
+            {eventLabel ? (
+              <div className={`event-callout event-callout--${eventLabel.tone}`}>
+                <strong>{eventLabel.title}</strong>
+                <span>{eventLabel.detail}</span>
+              </div>
+            ) : null}
 
             <div className="replay-layout">
               <aside className="situation-card">
@@ -1125,15 +1383,35 @@ function GameAudit({
 
               <PitchPlot entries={entries} selectedIndex={selectedIndex} />
 
-              <aside className="model-card">
-                <p className="eyebrow">Model Read</p>
-                <div className="metric-list">
-                  <span>Pitch type <strong>{pitchName(selected.snapshot.pitch_type)}</strong></span>
-                  <span>Velocity <strong>{fmtNumber(selected.snapshot.release_speed ?? selected.snapshot.starter_state.velo_mean_5, 1)} mph</strong></span>
-                  <span>Velocity change <strong>{fmtNumber(velocityDrop(selected), 1)} mph</strong></span>
-                  <span>Stuff score <strong>{stuffScore(selected)}/100</strong></span>
-                  <span>Degradation <strong>{fmtNumber(selected.snapshot.starter_state.degradation_score, 2)}</strong></span>
-                  <span>Recommended move <strong>{bestCandidate?.player_name || "Review bullpen"}</strong></span>
+              <aside className="model-synthesis-card">
+                <p className="eyebrow">Decision Read</p>
+                <div className="decision-score-row">
+                  <div className="degradation-ring" style={{ "--ring": `${Math.round(clamp(degradationPressure) * 100)}%` } as CSSProperties}>
+                    <strong>{fmtNumber(selected.snapshot.starter_state.enhanced_degradation_score ?? selected.snapshot.starter_state.degradation_score, 2)}</strong>
+                    <span>degradation</span>
+                  </div>
+                  <div>
+                    <span>Preventable Runs</span>
+                    <strong>{fmtRuns(selectedPreventableRuns)}</strong>
+                    <em>{selectedOpportunity ? "Calibrated opportunity model" : "Not attached to this pitch window"}</em>
+                  </div>
+                </div>
+                <div className="decision-gauge-grid">
+                  <GaugeMetric label="Stuff pressure" value={fmtPct(stuffPressure)} percent={stuffPressure} tone="bad" />
+                  <GaugeMetric label="Command pressure" value={fmtPct(commandPressure)} percent={commandPressure} tone="warn" />
+                  <GaugeMetric label="Decay pressure" value={fmtPct(decayPressure)} percent={decayPressure} tone="gold" />
+                  <GaugeMetric label="Leverage" value={fmtNumber(selected.snapshot.leverage_index, 2)} percent={scaledPercent(selected.snapshot.leverage_index, 3)} tone="gold" />
+                </div>
+                <div className="decision-delta">
+                  <strong>{hasWatchSignal ? "Relief decision delta" : "Relief context unlocks at WATCH"}</strong>
+                  {hasWatchSignal ? (
+                    <p>
+                      {bestCandidate?.player_name || "Best alternative"} changes the next-batter pocket by{" "}
+                      <b>{fmtSigned(selected.recommendation.decision_delta, 2)}</b> runs versus staying with the starter.
+                    </p>
+                  ) : (
+                    <p>Before WATCH, the replay stays focused on pitcher evidence. Bullpen alternatives are shown once the first action signal appears.</p>
+                  )}
                 </div>
                 <div className="source-row">
                   <SourceTag label="Official pitch facts" source="official" />
@@ -1142,6 +1420,7 @@ function GameAudit({
               </aside>
             </div>
 
+            <SignalTimeline entries={entries} statuses={displayStatuses} selectedIndex={selectedIndex} onSelect={setPitchIndex} />
             <div className="pitch-controls">
               <button type="button" onClick={() => setPitchIndex(Math.max(0, pitchIndex - 1))}>Previous</button>
               <input
@@ -1151,6 +1430,9 @@ function GameAudit({
                 value={Math.min(pitchIndex, Math.max(0, entries.length - 1))}
                 onChange={(event) => setPitchIndex(Number(event.target.value))}
               />
+              <button type="button" className={autoplay ? "active" : ""} onClick={() => setAutoplay((current) => !current)}>
+                {autoplay ? "Pause" : "Autoplay"}
+              </button>
               <button type="button" onClick={() => setPitchIndex(Math.min(entries.length - 1, pitchIndex + 1))}>Next</button>
               <button type="button" disabled={pullIndex < 0} onClick={() => setPitchIndex(pullIndex >= 0 ? pullIndex : pitchIndex)}>Jump to Pull Now</button>
             </div>
@@ -1158,9 +1440,9 @@ function GameAudit({
 
           <article className="panel evidence-panel">
             <div className="panel-title">
-              <p className="eyebrow">Pitch-Level Evidence</p>
-              <h3>What changed on the mound.</h3>
-              <p>These are the tracked model inputs for the selected pitch window. Missing values are shown as unavailable rather than estimated.</p>
+              <p className="eyebrow">Supporting Model Detail</p>
+              <h3>Why the signal moved.</h3>
+              <p>The headline read above is built from these tracked inputs. Missing values are shown as unavailable rather than estimated.</p>
             </div>
             <div className="evidence-grid">
               <section>
@@ -1198,49 +1480,91 @@ function GameAudit({
                 <GaugeMetric label="Pitcher history percentile" value={fmtRate(selectedState?.pitcher_empirical_degradation_percentile)} detail={`${selectedState?.pitcher_empirical_degradation_sample_count ?? "—"} pitcher windows.`} percent={selectedState?.pitcher_empirical_degradation_percentile ?? undefined} tone="gold" />
                 <GaugeMetric label="Decay pressure" value={`${fmtNumber(selectedState?.inning_decay_factor, 2)} inning · ${fmtNumber(selectedState?.tto_decay_factor, 2)} TTO`} detail={`${selectedState?.official_batters_faced_in_game ?? selectedState?.batters_faced_in_game ?? "—"} batters faced.`} percent={scaledPercent((selectedState?.inning_decay_factor ?? 0) + (selectedState?.tto_decay_factor ?? 0), 3)} tone="warn" />
               </section>
-              <section>
-                <h4>Relief Alternatives</h4>
-                {reliefOptions.length === 0 ? (
-                  <GaugeMetric label="Bullpen options" value={UNAVAILABLE} detail="No relief alternatives were attached to this pitch window." />
-                ) : (
-                  reliefOptions.map((candidate) => (
-                    <GaugeMetric
-                      key={candidate.player_id}
-                      label={candidate.player_name}
-                      value={candidate.available ? "Available" : "Not available"}
-                      detail={`Net option ${fmtNumber(candidate.net_option_score, 2)} · usage cost ${fmtNumber(candidate.usage_cost, 2)} · matchup ${fmtNumber(candidate.direct_matchup_fit, 2)}`}
-                      percent={scaledPercent(candidate.net_option_score, 1)}
-                      tone={candidate.available ? "good" : "neutral"}
-                    />
-                  ))
-                )}
-              </section>
+              {hasWatchSignal ? (
+                <section>
+                  <h4>Relief Alternatives</h4>
+                  {reliefOptions.length === 0 ? (
+                    <GaugeMetric label="Bullpen options" value={UNAVAILABLE} detail="No relief alternatives were attached to this pitch window." />
+                  ) : (
+                    reliefOptions.map((candidate) => (
+                      <GaugeMetric
+                        key={candidate.player_id}
+                        label={candidate.player_name}
+                        value={candidate.available ? "Available" : "Not available"}
+                        detail={`Net option ${fmtNumber(candidate.net_option_score, 2)} · usage cost ${fmtNumber(candidate.usage_cost, 2)} · matchup ${fmtNumber(candidate.direct_matchup_fit, 2)}`}
+                        percent={scaledPercent(candidate.net_option_score, 1)}
+                        tone={candidate.available ? "good" : "neutral"}
+                      />
+                    ))
+                  )}
+                </section>
+              ) : null}
             </div>
             {topComponents.length > 0 ? (
               <div className="component-strip">
                 <span>Top model contributors</span>
                 {topComponents.map(([key, value]) => (
-                  <em key={key}>{featureLabel(key)} {fmtSigned(value, 2)}</em>
+                  <em key={key}>{categoryContributorLabel(key)} {fmtSigned(value, 2)}</em>
                 ))}
               </div>
             ) : null}
           </article>
 
+          {teamRelievers.length > 0 ? (
+            <article className="panel rss-panel">
+              <div className="panel-title horizontal">
+                <div>
+                  <p className="eyebrow">Reliever Stress Signal</p>
+                  <h3>Bullpen outcomes from the same game.</h3>
+                  <p>Relievers are reported from the finalized recap payload. Pitch-level RSS replay views will require reliever-state replay entries from the backend.</p>
+                </div>
+                <SourceTag label="Finalized recap RSS" source="model" />
+              </div>
+              <div className="rss-table">
+                {teamRelievers.map((pitcher) => (
+                  <div key={pitcher.pitcher_id || pitcher.pitcher_name} className="rss-row">
+                    <div>
+                      <strong>{pitcher.pitcher_name}</strong>
+                      <span>{fmtNumber(pitcher.innings_pitched, 1)} IP · {pitcher.pitch_count ?? "—"} pitches · {pitcher.runs_allowed_total ?? "—"} R</span>
+                    </div>
+                    <div>
+                      <strong>{relieverRssLabel(pitcher)}</strong>
+                      <span>{relieverRssTimingCopy(pitcher)}</span>
+                    </div>
+                    <div>
+                      <strong>Outcome</strong>
+                      <span>{relieverOutcomeCopy(pitcher)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ) : null}
+
           <article className="panel counterfactual-panel">
-            <p className="eyebrow">Decision Explanation</p>
-            <h3>What the club should inspect.</h3>
+            <p className="eyebrow">Decision Outcome</p>
+            <h3>What happened after the model action point.</h3>
             <div className="counterfactual-grid">
               <div>
-                <strong>If changed here</strong>
-                <p>{bestCandidate ? `${bestCandidate.player_name} was the best recorded relief alternative at this selected pitch.` : "No relief alternative was recorded for this pitch window."}</p>
+                <strong>Pull Now summary</strong>
+                <p>{actionPointCopy(keyPitcher)}</p>
+                <ul className="mini-metric-list">
+                  <li>Stuff <b>{pullMetrics.stuff}</b></li>
+                  <li>Decay <b>{pullMetrics.decay}</b></li>
+                  <li>Degradation <b>{pullMetrics.degradation}</b></li>
+                </ul>
               </div>
               <div>
-                <strong>If stayed</strong>
-                <p>The starter’s current degradation is {fmtNumber(selected.snapshot.starter_state.degradation_score, 2)} with a stuff score of {stuffScore(selected)}.</p>
+                <strong>Decision delta</strong>
+                <p>
+                  {pullBestCandidate
+                    ? `${pullBestCandidate.player_name} was the best recorded relief alternative at the model action point.${pullDecisionDelta == null ? "" : ` The model estimated a ${fmtSigned(pullDecisionDelta, 2)} run delta versus staying with the starter.`}`
+                    : "No relief alternative was attached to the model action point, so the bullpen counterfactual is unavailable for this game."}
+                </p>
               </div>
               <div>
                 <strong>Actual result</strong>
-                <p>{keyPitcher?.runs_allowed_after_signal == null ? "Runs after the first action point are unavailable for this pitcher." : `${keyPitcher.runs_allowed_after_signal} runs scored after the first action point.`}</p>
+                <p>{exitAndDamageCopy(keyPitcher)}</p>
               </div>
             </div>
           </article>
@@ -1448,6 +1772,159 @@ function RosterConstruction({
   );
 }
 
+function BriefingSettings({
+  team,
+  settings,
+  status,
+  onSave,
+}: {
+  team: Team;
+  settings: PitchingRecapSettings | null;
+  status: string | null;
+  onSave: (patch: Partial<PitchingRecapSettings>) => Promise<void>;
+}) {
+  const [recapTeamsText, setRecapTeamsText] = useState("");
+  const [autoTeamsText, setAutoTeamsText] = useState("");
+  const [finalizedTeamsText, setFinalizedTeamsText] = useState("");
+  const [recipientsText, setRecipientsText] = useState("");
+  const [teamToAdd, setTeamToAdd] = useState(team.abbr);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setRecapTeamsText((settings?.recap_teams ?? []).join(", "));
+    setAutoTeamsText((settings?.auto_email_teams ?? []).join(", "));
+    setFinalizedTeamsText((settings?.finalized_email_teams ?? []).join(", "));
+    setRecipientsText((settings?.team_recipients?.[team.abbr] ?? []).join(", "));
+    setTeamToAdd(team.abbr);
+  }, [settings, team.abbr]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave({
+        recap_teams: teamCsv(recapTeamsText),
+        auto_email_teams: teamCsv(autoTeamsText),
+        finalized_email_teams: teamCsv(finalizedTeamsText),
+        team_recipients: {
+          ...(settings?.team_recipients ?? {}),
+          [team.abbr]: parseCsvList(recipientsText),
+        },
+      });
+    } catch {
+      // Parent state carries the visible error message.
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleSelectedClub(list: "recap" | "auto" | "finalized") {
+    if (list === "recap") {
+      setRecapTeamsText((current) => csvSetTeam(current, team.abbr, !csvHasTeam(current, team.abbr)));
+    } else if (list === "auto") {
+      setAutoTeamsText((current) => csvSetTeam(current, team.abbr, !csvHasTeam(current, team.abbr)));
+    } else {
+      setFinalizedTeamsText((current) => csvSetTeam(current, team.abbr, !csvHasTeam(current, team.abbr)));
+    }
+  }
+
+  function addClubToLists() {
+    setRecapTeamsText((current) => csvSetTeam(current, teamToAdd, true));
+    setAutoTeamsText((current) => csvSetTeam(current, teamToAdd, true));
+    setFinalizedTeamsText((current) => csvSetTeam(current, teamToAdd, true));
+  }
+
+  return (
+    <section className="workflow">
+      <div className="page-lead compact">
+        <div>
+          <p className="eyebrow">Enterprise Briefings</p>
+          <h2>Postgame recap delivery settings.</h2>
+          <p>Manage which clubs receive enterprise pitcher-intelligence emails and who receives them. SMTP credentials remain managed in the shared secure backend config.</p>
+        </div>
+        <button type="button" onClick={handleSave} disabled={!settings || saving}>
+          {saving ? "Saving..." : "Save settings"}
+        </button>
+      </div>
+
+      <div className="briefing-settings-grid">
+        <article className="panel">
+          <p className="eyebrow">Delivery Status</p>
+          <h3>{settings?.shared_email_configured ? "Email provider configured" : "Email provider needs attention"}</h3>
+          <div className="settings-status-list">
+            <span>Provider <strong>{settings?.email_provider ? settings.email_provider.toUpperCase() : UNAVAILABLE}</strong></span>
+            <span>Selected club <strong>{team.name}</strong></span>
+            <span>Auto-send for club <strong>{csvHasTeam(autoTeamsText, team.abbr) ? "Enabled" : "Disabled"}</strong></span>
+            <span>Wait for full replay <strong>{csvHasTeam(finalizedTeamsText, team.abbr) ? "Enabled" : "Disabled"}</strong></span>
+          </div>
+          <div className="delivery-toggle-grid">
+            <button type="button" className={csvHasTeam(recapTeamsText, team.abbr) ? "active" : ""} onClick={() => toggleSelectedClub("recap")}>
+              {csvHasTeam(recapTeamsText, team.abbr) ? "Remove from recaps" : "Add to recaps"}
+            </button>
+            <button type="button" className={csvHasTeam(autoTeamsText, team.abbr) ? "active" : ""} onClick={() => toggleSelectedClub("auto")}>
+              {csvHasTeam(autoTeamsText, team.abbr) ? "Auto-send on" : "Auto-send off"}
+            </button>
+            <button type="button" className={csvHasTeam(finalizedTeamsText, team.abbr) ? "active" : ""} onClick={() => toggleSelectedClub("finalized")}>
+              {csvHasTeam(finalizedTeamsText, team.abbr) ? "Wait for replay on" : "Wait for replay off"}
+            </button>
+          </div>
+          {status ? <p className="settings-status-message">{status}</p> : null}
+        </article>
+
+        <article className="panel settings-form">
+          <p className="eyebrow">Team Scope</p>
+          <div className="team-add-row">
+            <label>
+              Add club
+              <select value={teamToAdd} onChange={(event) => setTeamToAdd(event.target.value)}>
+                {MLB_TEAMS.map((club) => (
+                  <option key={club.abbr} value={club.abbr}>
+                    {club.abbr} · {club.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={addClubToLists}>
+              Add to all delivery lists
+            </button>
+          </div>
+          <label>
+            Enterprise recap teams
+            <input value={recapTeamsText} onChange={(event) => setRecapTeamsText(event.target.value)} placeholder="ATL, LAD, NYY" />
+            <span>Teams visible in the recap workflow.</span>
+          </label>
+          <label>
+            Automatic email teams
+            <input value={autoTeamsText} onChange={(event) => setAutoTeamsText(event.target.value)} placeholder="ATL, LAD" />
+            <span>Teams checked for postgame auto-send.</span>
+          </label>
+          <label>
+            Finalized replay teams
+            <input value={finalizedTeamsText} onChange={(event) => setFinalizedTeamsText(event.target.value)} placeholder="ATL, LAD" />
+            <span>Teams whose emails wait for canonical replay detail before delivery.</span>
+          </label>
+        </article>
+
+        <article className="panel settings-form">
+          <p className="eyebrow">Recipients</p>
+          <h3>{team.abbr} recipients</h3>
+          <label>
+            Recipient emails
+            <textarea value={recipientsText} onChange={(event) => setRecipientsText(event.target.value)} placeholder="ops@example.com, pitching@example.com" />
+            <span>Comma-separated list for the selected club.</span>
+          </label>
+          <div className="recipient-preview">
+            {parseCsvList(recipientsText).length === 0 ? (
+              <span>No recipients configured for {team.abbr}.</span>
+            ) : (
+              parseCsvList(recipientsText).map((recipient) => <em key={recipient}>{recipient}</em>)
+            )}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [selectedTeamAbbr, setSelectedTeamAbbr] = useState("ATL");
   const [workflow, setWorkflow] = useState<Workflow>("command");
@@ -1458,6 +1935,8 @@ export default function App() {
   const [auditSummary, setAuditSummary] = useState<PitchingAuditSummaryPayload | null>(null);
   const [replay, setReplay] = useState<PitchingReplayResponse | null>(null);
   const [recap, setRecap] = useState<PitchingGameRecap | null>(null);
+  const [recapSettings, setRecapSettings] = useState<PitchingRecapSettings | null>(null);
+  const [recapSettingsStatus, setRecapSettingsStatus] = useState<string | null>(null);
 
   const selectedTeam = MLB_TEAMS.find((team) => team.abbr === selectedTeamAbbr) ?? MLB_TEAMS[0];
   const { loadState, payload, error, reload } = useRunSavingBoard({ league: "mlb", team: selectedTeam.abbr, limit: 50 });
@@ -1467,8 +1946,35 @@ export default function App() {
     error: preventableRunsError,
     loading: preventableRunsLoading,
     reload: reloadPreventableRuns,
-  } = usePreventableRunsOpportunities({ season, team: selectedTeam.abbr, limit: 500 });
+  } = usePreventableRunsOpportunities({ season, team: selectedTeam.abbr, limit: 5000 });
   const apiBase = getConfiguredApiBase();
+
+  const loadRecapSettings = useCallback(async () => {
+    try {
+      const settings = await fetchPitchingRecapSettings("mlb");
+      setRecapSettings(settings);
+      setRecapSettingsStatus(null);
+    } catch (caught) {
+      setRecapSettings(null);
+      setRecapSettingsStatus(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRecapSettings();
+  }, [loadRecapSettings]);
+
+  async function handleSaveRecapSettings(patch: Partial<PitchingRecapSettings>) {
+    setRecapSettingsStatus("Saving settings...");
+    try {
+      const settings = await savePitchingRecapSettings(patch, "mlb");
+      setRecapSettings(settings);
+      setRecapSettingsStatus("Settings saved.");
+    } catch (caught) {
+      setRecapSettingsStatus(caught instanceof Error ? caught.message : String(caught));
+      throw caught;
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -1539,6 +2045,7 @@ export default function App() {
     void reload();
     void reloadTripleA();
     void reloadPreventableRuns();
+    void loadRecapSettings();
   }
 
   return (
@@ -1597,6 +2104,7 @@ export default function App() {
           onGameChange={setSelectedGameId}
           replay={replay}
           recap={recap}
+          preventableRows={preventableRuns?.rows ?? []}
         />
       )}
 
@@ -1606,6 +2114,15 @@ export default function App() {
 
       {loadState === "ready" && workflow === "roster" && (
         <RosterConstruction team={selectedTeam} profiles={profiles} auditSummary={auditSummary} candidates={tripleA} />
+      )}
+
+      {loadState === "ready" && workflow === "briefings" && (
+        <BriefingSettings
+          team={selectedTeam}
+          settings={recapSettings}
+          status={recapSettingsStatus}
+          onSave={handleSaveRecapSettings}
+        />
       )}
 
       <footer className="app-footer">
