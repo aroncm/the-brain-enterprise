@@ -1364,6 +1364,40 @@ select {
   box-shadow: var(--shadow-soft);
 }
 
+.briefing-preview-html-card {
+  background: var(--paper);
+}
+
+.briefing-preview-browser-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  padding: 14px 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.briefing-preview-browser-header strong {
+  color: var(--navy);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.briefing-html-preview {
+  max-height: 980px;
+  overflow: auto;
+  background: #f8f6f0;
+}
+
+.briefing-html-preview table {
+  max-width: 100%;
+}
+
 .briefing-email-header {
   padding: 34px 42px;
   background: var(--navy);

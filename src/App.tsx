@@ -607,6 +607,7 @@ function recapScoreLine(recap: PitchingGameRecap | null): string {
 }
 
 function buildBriefingPlainText(response: PitchingRecapEmailResponse, team: Team): string {
+  if (response.text) return response.text;
   const recap = response.recap;
   const pitchers = selectedTeamPitchers(recap, team);
   const starters = pitchers.filter((pitcher) => pitcherRoleLabel(pitcher) !== "Reliever");
@@ -1821,6 +1822,18 @@ function RosterConstruction({
 }
 
 function BriefingPreview({ response, team }: { response: PitchingRecapEmailResponse; team: Team }) {
+  if (response.html) {
+    return (
+      <article className="briefing-preview-card briefing-preview-html-card">
+        <div className="briefing-preview-browser-header">
+          <span>In-app email preview</span>
+          <strong>{response.subject ?? `brAIn — ${team.abbr} Recap`}</strong>
+        </div>
+        <div className="briefing-html-preview" dangerouslySetInnerHTML={{ __html: response.html }} />
+      </article>
+    );
+  }
+
   const recap = response.recap;
   const pitchers = selectedTeamPitchers(recap, team);
   const starters = pitchers.filter((pitcher) => pitcherRoleLabel(pitcher) !== "Reliever");
@@ -2034,13 +2047,40 @@ function BriefingSettings({
 
   async function copyPreview(kind: "email" | "text") {
     if (!previewResponse) return;
-    const text = kind === "email" ? `${previewResponse.subject ?? `brAIn — ${previewTeam} Recap`}\n\n${buildBriefingPlainText(previewResponse, previewTeamObject)}` : buildBriefingPlainText(previewResponse, previewTeamObject);
+    const plainText = buildBriefingPlainText(previewResponse, previewTeamObject);
+    const text = kind === "email" ? `${previewResponse.subject ?? `brAIn — ${previewTeam} Recap`}\n\n${plainText}` : plainText;
     try {
+      if (kind === "email" && previewResponse.html && "ClipboardItem" in window && navigator.clipboard.write) {
+        const ClipboardItemCtor = window.ClipboardItem;
+        await navigator.clipboard.write([
+          new ClipboardItemCtor({
+            "text/html": new Blob([previewResponse.html], { type: "text/html" }),
+            "text/plain": new Blob([text], { type: "text/plain" }),
+          }),
+        ]);
+        setPreviewStatus("Rich email preview copied to clipboard.");
+        return;
+      }
       await navigator.clipboard.writeText(text);
       setPreviewStatus(kind === "email" ? "Email copy copied to clipboard." : "Briefing text copied to clipboard.");
     } catch {
       setPreviewStatus("Clipboard copy is unavailable in this browser.");
     }
+  }
+
+  function exportPreviewPdf() {
+    if (previewResponse?.html) {
+      const printWindow = window.open("", "_blank", "noopener,noreferrer");
+      if (printWindow) {
+        printWindow.document.open();
+        printWindow.document.write(previewResponse.html);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+        return;
+      }
+    }
+    window.print();
   }
 
   return (
@@ -2087,7 +2127,7 @@ function BriefingSettings({
           <button type="button" onClick={() => void copyPreview("email")} disabled={!previewResponse}>
             Copy Email
           </button>
-          <button type="button" onClick={() => window.print()} disabled={!previewResponse}>
+          <button type="button" onClick={exportPreviewPdf} disabled={!previewResponse}>
             Export PDF
           </button>
           <button type="button" onClick={() => void copyPreview("text")} disabled={!previewResponse}>
