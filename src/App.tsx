@@ -23,6 +23,7 @@ import type {
   PitchingAuditSummaryPayload,
   PitchingAuditWindow,
   PitchingGameRecap,
+  PitchingRecapEmailResponse,
   PitchingRecapPitcher,
   PitchingRecapSettings,
   PitchingReplayEntry,
@@ -43,6 +44,7 @@ const LOADING_VALUE = "Awaiting data";
 
 const MLB_TEAM_IDS: Record<string, number> = {
   ARI: 109,
+  AZ: 109,
   ATL: 144,
   BAL: 110,
   BOS: 111,
@@ -75,7 +77,7 @@ const MLB_TEAM_IDS: Record<string, number> = {
 };
 
 const MLB_TEAMS: Team[] = [
-  { abbr: "ARI", name: "Arizona Diamondbacks", club: "Diamondbacks", division: "NL West" },
+  { abbr: "AZ", name: "Arizona Diamondbacks", club: "Diamondbacks", division: "NL West" },
   { abbr: "ATL", name: "Atlanta Braves", club: "Braves", division: "NL East" },
   { abbr: "BAL", name: "Baltimore Orioles", club: "Orioles", division: "AL East" },
   { abbr: "BOS", name: "Boston Red Sox", club: "Red Sox", division: "AL East" },
@@ -567,6 +569,10 @@ function selectedTeamPitchers(recap: PitchingGameRecap | null, team: Team) {
   return recap?.starters.filter((pitcher) => pitcher.team === team.abbr) ?? [];
 }
 
+function pitcherRoleLabel(pitcher: PitchingRecapPitcher): string {
+  return String(pitcher.role || "Starter").toLowerCase() === "reliever" ? "Reliever" : "Starter";
+}
+
 function teamPitcherRecapCopy(pitcher: PitchingRecapPitcher | null): string {
   if (!pitcher) return "No pitcher-specific recap has been generated for this club yet.";
   const firstAction =
@@ -584,6 +590,48 @@ function teamPitcherRecapCopy(pitcher: PitchingRecapPitcher | null): string {
       ? "exit timing unavailable"
       : `exited in the ${ordinal(pitcher.actual_exit_inning)} at pitch ${pitcher.actual_exit_pitch_count ?? "—"}`;
   return `${firstAction}; ${exit}; ${result}.`;
+}
+
+function recapOpponent(recap: PitchingGameRecap | null, team: Team): string {
+  if (!recap) return "Opponent";
+  if (recap.home_team === team.abbr) return recap.away_team;
+  if (recap.away_team === team.abbr) return recap.home_team;
+  return recap.away_team === team.abbr ? recap.home_team : recap.away_team;
+}
+
+function recapScoreLine(recap: PitchingGameRecap | null): string {
+  if (!recap) return "Final score unavailable";
+  const awayScore = recap.final_away_score == null ? "—" : String(recap.final_away_score);
+  const homeScore = recap.final_home_score == null ? "—" : String(recap.final_home_score);
+  return `${recap.away_team} ${awayScore}, ${recap.home_team} ${homeScore}`;
+}
+
+function buildBriefingPlainText(response: PitchingRecapEmailResponse, team: Team): string {
+  const recap = response.recap;
+  const pitchers = selectedTeamPitchers(recap, team);
+  const starters = pitchers.filter((pitcher) => pitcherRoleLabel(pitcher) !== "Reliever");
+  const relievers = pitchers.filter((pitcher) => pitcherRoleLabel(pitcher) === "Reliever");
+  const keyPitcher = starters.find((pitcher) => pitcher.first_pull_now_inning != null || pitcher.first_alert_inning != null) ?? starters[0] ?? pitchers[0] ?? null;
+  const lines = [
+    response.subject ?? `brAIn — ${team.abbr} Recap`,
+    formatDateText(recap.date),
+    recapScoreLine(recap),
+    "",
+    "Mound Signal",
+    actionPointCopy(keyPitcher),
+    exitAndDamageCopy(keyPitcher),
+    "",
+    "Pitchers",
+    ...pitchers.map(
+      (pitcher) =>
+        `${pitcher.pitcher_name} (${pitcherRoleLabel(pitcher)}): ${fmtNumber(pitcher.innings_pitched, 1)} IP, ${pitcher.pitch_count ?? "—"} pitches, ${pitcher.runs_allowed_total ?? "—"} R`,
+    ),
+  ];
+  if (relievers.length > 0) {
+    lines.push("", "Bullpen RSS");
+    lines.push(...relievers.map((pitcher) => `${pitcher.pitcher_name}: ${relieverRssLabel(pitcher)} — ${relieverOutcomeCopy(pitcher)}`));
+  }
+  return lines.join("\n");
 }
 
 function TeamLogo({ abbr }: { abbr: string }) {
@@ -1772,6 +1820,97 @@ function RosterConstruction({
   );
 }
 
+function BriefingPreview({ response, team }: { response: PitchingRecapEmailResponse; team: Team }) {
+  const recap = response.recap;
+  const pitchers = selectedTeamPitchers(recap, team);
+  const starters = pitchers.filter((pitcher) => pitcherRoleLabel(pitcher) !== "Reliever");
+  const relievers = pitchers.filter((pitcher) => pitcherRoleLabel(pitcher) === "Reliever");
+  const keyPitcher = starters.find((pitcher) => pitcher.first_pull_now_inning != null || pitcher.first_alert_inning != null) ?? starters[0] ?? pitchers[0] ?? null;
+  const pullSignals = pitchers.filter((pitcher) => pitcher.first_pull_now_inning != null).length;
+  const insights = pitchers.length + pullSignals + relievers.filter((pitcher) => pitcher.rss_score != null).length;
+
+  return (
+    <article className="briefing-preview-card">
+      <header className="briefing-email-header">
+        <p className="eyebrow">Pitcher Intel</p>
+        <h3>{response.subject ?? `brAIn — ${team.abbr} Recap`}</h3>
+        <span>{formatDateText(recap.date)}</span>
+      </header>
+
+      <div className="briefing-preview-kpis">
+        <KPI label="Delivery" value={response.sent ? "Sent" : "Preview"} detail={response.sent_to?.length ? response.sent_to.join(", ") : "Generated in app"} />
+        <KPI label="Starters" value={String(starters.length)} detail="Team starter appearances in recap." />
+        <KPI label="Relievers" value={String(relievers.length)} detail="Team relief appearances in recap." />
+        <KPI label="Pull Signals" value={String(pullSignals)} detail="Model Pull Now triggers." tone={pullSignals > 0 ? "bad" : "neutral"} />
+      </div>
+
+      <div className="briefing-preview-title">
+        <div>
+          <h3>{keyPitcher?.pitcher_name ?? team.name} vs. {recapOpponent(recap, team)}</h3>
+          <p>{formatDateText(recap.date)} · {recapScoreLine(recap)}</p>
+          {keyPitcher ? (
+            <p>
+              {fmtNumber(keyPitcher.innings_pitched, 1)} IP · {keyPitcher.pitch_count ?? "—"} pitches · {keyPitcher.runs_allowed_total ?? "—"} R
+            </p>
+          ) : null}
+        </div>
+        <button type="button" disabled>
+          Open Full Pitch-by-Pitch Replay
+        </button>
+      </div>
+
+      <div className="briefing-preview-table">
+        <div className="briefing-preview-table-head">
+          <span>Pitcher</span>
+          <span>Line</span>
+          <span>Signal</span>
+          <span>Role</span>
+        </div>
+        {pitchers.map((pitcher) => (
+          <div key={`${pitcher.pitcher_id}-${pitcher.pitcher_name}`} className="briefing-preview-table-row">
+            <strong>{pitcher.pitcher_name}</strong>
+            <span>{fmtNumber(pitcher.innings_pitched, 1)} IP · {pitcher.runs_allowed_total ?? "—"} R · {pitcher.pitch_count ?? "—"} pitches</span>
+            <span>{pitcherRoleLabel(pitcher) === "Reliever" ? relieverRssLabel(pitcher) : actionPointCopy(pitcher)}</span>
+            <span>{pitcherRoleLabel(pitcher)}</span>
+          </div>
+        ))}
+      </div>
+
+      <section className="mound-signal-preview">
+        <p className="eyebrow">Mound Signal</p>
+        <p>{actionPointCopy(keyPitcher)}</p>
+        <p>{exitAndDamageCopy(keyPitcher)}</p>
+      </section>
+
+      <div className="briefing-preview-sections">
+        <section>
+          <p className="eyebrow">Starter Read</p>
+          <h4>{keyPitcher?.pitcher_name ?? "Starter"}</h4>
+          <p>{teamPitcherRecapCopy(keyPitcher)}</p>
+        </section>
+        <section>
+          <p className="eyebrow">Bullpen</p>
+          <h4>{relievers.length} reliever{relievers.length === 1 ? "" : "s"} covered</h4>
+          {relievers.length === 0 ? (
+            <p>No team relievers were returned in this recap.</p>
+          ) : (
+            relievers.slice(0, 5).map((pitcher) => (
+              <p key={`${pitcher.pitcher_id}-rss`}>
+                <strong>{pitcher.pitcher_name}:</strong> {relieverRssLabel(pitcher)} · {relieverOutcomeCopy(pitcher)}
+              </p>
+            ))
+          )}
+        </section>
+        <section>
+          <p className="eyebrow">Insights</p>
+          <h4>{insights}</h4>
+          <p>Starter action points, reliever RSS reads, and outcome checks included in this briefing preview.</p>
+        </section>
+      </div>
+    </article>
+  );
+}
+
 function BriefingSettings({
   team,
   settings,
@@ -1786,29 +1925,60 @@ function BriefingSettings({
   const [recapTeamsText, setRecapTeamsText] = useState("");
   const [autoTeamsText, setAutoTeamsText] = useState("");
   const [finalizedTeamsText, setFinalizedTeamsText] = useState("");
-  const [recipientsText, setRecipientsText] = useState("");
+  const [recipientsByTeam, setRecipientsByTeam] = useState<Record<string, string>>({});
   const [teamToAdd, setTeamToAdd] = useState(team.abbr);
+  const [previewTeam, setPreviewTeam] = useState(team.abbr);
+  const [previewDate, setPreviewDate] = useState("");
+  const [previewResponse, setPreviewResponse] = useState<PitchingRecapEmailResponse | null>(null);
+  const [previewStatus, setPreviewStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  const configuredTeams = useMemo(() => {
+    const values = new Set<string>();
+    [...teamCsv(recapTeamsText), ...teamCsv(autoTeamsText), ...teamCsv(finalizedTeamsText), ...Object.keys(recipientsByTeam)].forEach((abbr) => {
+      if (MLB_TEAMS.some((club) => club.abbr === abbr)) values.add(abbr);
+    });
+    if (values.size === 0) values.add(team.abbr);
+    return MLB_TEAMS.map((club) => club.abbr).filter((abbr) => values.has(abbr));
+  }, [autoTeamsText, finalizedTeamsText, recapTeamsText, recipientsByTeam, team.abbr]);
+
+  const quickPickTeams = configuredTeams.slice(0, 4);
+  const previewTeamObject = MLB_TEAMS.find((club) => club.abbr === previewTeam) ?? team;
 
   useEffect(() => {
     setRecapTeamsText((settings?.recap_teams ?? []).join(", "));
     setAutoTeamsText((settings?.auto_email_teams ?? []).join(", "));
     setFinalizedTeamsText((settings?.finalized_email_teams ?? []).join(", "));
-    setRecipientsText((settings?.team_recipients?.[team.abbr] ?? []).join(", "));
+    const teams = new Set<string>([
+      team.abbr,
+      ...(settings?.recap_teams ?? []),
+      ...(settings?.auto_email_teams ?? []),
+      ...(settings?.finalized_email_teams ?? []),
+      ...Object.keys(settings?.team_recipients ?? {}),
+    ]);
+    const nextRecipients: Record<string, string> = {};
+    teams.forEach((abbr) => {
+      nextRecipients[abbr.toUpperCase()] = (settings?.team_recipients?.[abbr.toUpperCase()] ?? settings?.team_recipients?.[abbr] ?? []).join(", ");
+    });
+    setRecipientsByTeam(nextRecipients);
     setTeamToAdd(team.abbr);
+    setPreviewTeam(team.abbr);
   }, [settings, team.abbr]);
 
   async function handleSave() {
     setSaving(true);
     try {
+      const nextRecipients: Record<string, string[]> = {};
+      configuredTeams.forEach((abbr) => {
+        nextRecipients[abbr] = parseCsvList(recipientsByTeam[abbr] ?? "");
+      });
       await onSave({
         recap_teams: teamCsv(recapTeamsText),
         auto_email_teams: teamCsv(autoTeamsText),
         finalized_email_teams: teamCsv(finalizedTeamsText),
-        team_recipients: {
-          ...(settings?.team_recipients ?? {}),
-          [team.abbr]: parseCsvList(recipientsText),
-        },
+        team_recipients: nextRecipients,
       });
     } catch {
       // Parent state carries the visible error message.
@@ -1817,64 +1987,153 @@ function BriefingSettings({
     }
   }
 
-  function toggleSelectedClub(list: "recap" | "auto" | "finalized") {
-    if (list === "recap") {
-      setRecapTeamsText((current) => csvSetTeam(current, team.abbr, !csvHasTeam(current, team.abbr)));
-    } else if (list === "auto") {
-      setAutoTeamsText((current) => csvSetTeam(current, team.abbr, !csvHasTeam(current, team.abbr)));
-    } else {
-      setFinalizedTeamsText((current) => csvSetTeam(current, team.abbr, !csvHasTeam(current, team.abbr)));
+  function addClubToLists() {
+    const abbr = teamToAdd.toUpperCase();
+    setRecapTeamsText((current) => csvSetTeam(current, abbr, true));
+    setAutoTeamsText((current) => csvSetTeam(current, abbr, true));
+    setFinalizedTeamsText((current) => csvSetTeam(current, abbr, true));
+    setRecipientsByTeam((current) => ({
+      ...current,
+      [abbr]: current[abbr] ?? (settings?.team_recipients?.[abbr] ?? []).join(", "),
+    }));
+    setPreviewTeam(abbr);
+  }
+
+  async function resolvePreviewGame(targetTeam: string): Promise<EnterpriseGameSummary> {
+    const gamePayload = await fetchEnterpriseGames({
+      league: "mlb",
+      team: targetTeam,
+      date: previewDate || undefined,
+      limit: previewDate ? 20 : 75,
+    });
+    const match = gamePayload.games.find((game) => game.home_team === targetTeam || game.away_team === targetTeam) ?? gamePayload.games[0];
+    if (!match) {
+      throw new Error(previewDate ? `No completed recap game found for ${targetTeam} on ${previewDate}.` : `No completed recap game found for ${targetTeam}.`);
+    }
+    return match;
+  }
+
+  async function handleGenerate(send: boolean) {
+    if (!previewTeam) return;
+    if (send) setSending(true);
+    else setGenerating(true);
+    setPreviewStatus(send ? "Sending briefing..." : "Generating briefing preview...");
+    try {
+      const game = await resolvePreviewGame(previewTeam);
+      const response = await sendPitchingRecapEmail({ game_id: game.game_id, team: previewTeam, send }, "mlb");
+      setPreviewResponse(response);
+      const recipients = response.sent_to?.length ? response.sent_to.join(", ") : response.recipients?.join(", ");
+      setPreviewStatus(send ? (response.sent ? `Briefing sent${recipients ? ` to ${recipients}` : ""}.` : "Briefing generated, but no email was sent.") : "Briefing preview generated.");
+    } catch (caught) {
+      setPreviewStatus(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setGenerating(false);
+      setSending(false);
     }
   }
 
-  function addClubToLists() {
-    setRecapTeamsText((current) => csvSetTeam(current, teamToAdd, true));
-    setAutoTeamsText((current) => csvSetTeam(current, teamToAdd, true));
-    setFinalizedTeamsText((current) => csvSetTeam(current, teamToAdd, true));
+  async function copyPreview(kind: "email" | "text") {
+    if (!previewResponse) return;
+    const text = kind === "email" ? `${previewResponse.subject ?? `brAIn — ${previewTeam} Recap`}\n\n${buildBriefingPlainText(previewResponse, previewTeamObject)}` : buildBriefingPlainText(previewResponse, previewTeamObject);
+    try {
+      await navigator.clipboard.writeText(text);
+      setPreviewStatus(kind === "email" ? "Email copy copied to clipboard." : "Briefing text copied to clipboard.");
+    } catch {
+      setPreviewStatus("Clipboard copy is unavailable in this browser.");
+    }
   }
 
   return (
-    <section className="workflow">
-      <div className="page-lead compact">
-        <div>
-          <p className="eyebrow">Enterprise Briefings</p>
-          <h2>Postgame recap delivery settings.</h2>
-          <p>Manage which clubs receive enterprise pitcher-intelligence emails and who receives them. SMTP credentials remain managed in the shared secure backend config.</p>
+    <section className="workflow briefing-workflow">
+      <article className="panel generate-recap-panel">
+        <div className="generate-recap-header">
+          <h2>Generate Recap</h2>
+          <p>Select a team and date to generate or send a pitcher intel email.</p>
         </div>
-        <button type="button" onClick={handleSave} disabled={!settings || saving}>
-          {saving ? "Saving..." : "Save settings"}
-        </button>
-      </div>
+        <div className="generate-recap-controls">
+          <label>
+            Team
+            <select value={previewTeam} onChange={(event) => setPreviewTeam(event.target.value)}>
+              {configuredTeams.map((abbr) => {
+                const club = MLB_TEAMS.find((item) => item.abbr === abbr);
+                return (
+                  <option key={abbr} value={abbr}>
+                    {abbr}{club ? ` · ${club.name}` : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+          {quickPickTeams.length > 0 ? (
+            <div className="quick-picks">
+              <span>Quick picks</span>
+              {quickPickTeams.map((abbr) => (
+                <button key={abbr} type="button" className={previewTeam === abbr ? "active" : ""} onClick={() => setPreviewTeam(abbr)}>
+                  {abbr}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <label>
+            Date
+            <input type="date" value={previewDate} onChange={(event) => setPreviewDate(event.target.value)} />
+          </label>
+          <button type="button" onClick={() => void handleGenerate(false)} disabled={generating || sending}>
+            {generating ? "Generating..." : "Generate"}
+          </button>
+          <button type="button" className="send-button" onClick={() => void handleGenerate(true)} disabled={generating || sending}>
+            {sending ? "Sending..." : "Send Email"}
+          </button>
+          <button type="button" onClick={() => void copyPreview("email")} disabled={!previewResponse}>
+            Copy Email
+          </button>
+          <button type="button" onClick={() => window.print()} disabled={!previewResponse}>
+            Export PDF
+          </button>
+          <button type="button" onClick={() => void copyPreview("text")} disabled={!previewResponse}>
+            Copy Text
+          </button>
+        </div>
+        {previewStatus ? <p className="settings-status-message">{previewStatus}</p> : null}
+      </article>
 
-      <div className="briefing-settings-grid">
-        <article className="panel">
-          <p className="eyebrow">Delivery Status</p>
-          <h3>{settings?.shared_email_configured ? "Email provider configured" : "Email provider needs attention"}</h3>
-          <div className="settings-status-list">
-            <span>Provider <strong>{settings?.email_provider ? settings.email_provider.toUpperCase() : UNAVAILABLE}</strong></span>
-            <span>Selected club <strong>{team.name}</strong></span>
-            <span>Auto-send for club <strong>{csvHasTeam(autoTeamsText, team.abbr) ? "Enabled" : "Disabled"}</strong></span>
-            <span>Wait for full replay <strong>{csvHasTeam(finalizedTeamsText, team.abbr) ? "Enabled" : "Disabled"}</strong></span>
+      {previewResponse ? (
+        <BriefingPreview response={previewResponse} team={previewTeamObject} />
+      ) : (
+        <article className="panel briefing-empty-preview">
+          <div>
+            <strong>Select a team and click Generate</strong>
+            <p>Enterprise pitcher analysis for front-office staff. Each recap covers starters and relievers with analytical bullets, game box scores, and Mound Signal timing.</p>
           </div>
-          <div className="delivery-toggle-grid">
-            <button type="button" className={csvHasTeam(recapTeamsText, team.abbr) ? "active" : ""} onClick={() => toggleSelectedClub("recap")}>
-              {csvHasTeam(recapTeamsText, team.abbr) ? "Remove from recaps" : "Add to recaps"}
-            </button>
-            <button type="button" className={csvHasTeam(autoTeamsText, team.abbr) ? "active" : ""} onClick={() => toggleSelectedClub("auto")}>
-              {csvHasTeam(autoTeamsText, team.abbr) ? "Auto-send on" : "Auto-send off"}
-            </button>
-            <button type="button" className={csvHasTeam(finalizedTeamsText, team.abbr) ? "active" : ""} onClick={() => toggleSelectedClub("finalized")}>
-              {csvHasTeam(finalizedTeamsText, team.abbr) ? "Wait for replay on" : "Wait for replay off"}
-            </button>
-          </div>
-          {status ? <p className="settings-status-message">{status}</p> : null}
         </article>
+      )}
 
-        <article className="panel settings-form">
-          <p className="eyebrow">Team Scope</p>
-          <div className="team-add-row">
-            <label>
-              Add club
+      <article className="panel delivery-settings-panel">
+        <div className="panel-title horizontal">
+          <div>
+            <p className="eyebrow">Delivery Settings</p>
+            <h3>Postgame recap delivery settings.</h3>
+            <p>Configure per-team recipients, delivery provider, and auto-send for nightly emails.</p>
+          </div>
+          <button type="button" onClick={handleSave} disabled={!settings || saving}>
+            {saving ? "Saving..." : "Save Settings"}
+          </button>
+        </div>
+
+        <div className="legacy-settings-form">
+          <div className="legacy-settings-row">
+            <span>Automatic email delivery</span>
+            <strong>{settings?.shared_email_configured ? "Enabled" : "Needs provider"}</strong>
+            <em>When enabled, selected teams send after full replay detail is ready.</em>
+          </div>
+          <div className="legacy-settings-row">
+            <span>Email provider</span>
+            <strong>{settings?.email_provider ? settings.email_provider.toUpperCase() : UNAVAILABLE}</strong>
+            <em>SMTP credentials are managed in the secure backend config.</em>
+          </div>
+          <div className="legacy-settings-row">
+            <span>Add team</span>
+            <div className="team-add-inline">
               <select value={teamToAdd} onChange={(event) => setTeamToAdd(event.target.value)}>
                 {MLB_TEAMS.map((club) => (
                   <option key={club.abbr} value={club.abbr}>
@@ -1882,45 +2141,51 @@ function BriefingSettings({
                   </option>
                 ))}
               </select>
-            </label>
-            <button type="button" onClick={addClubToLists}>
-              Add to all delivery lists
-            </button>
+              <button type="button" onClick={addClubToLists}>
+                Add to all lists
+              </button>
+            </div>
+            <em>Adds the club to the recap workflow, auto-send checks, finalized replay wait list, and recipient table.</em>
           </div>
-          <label>
-            Enterprise recap teams
+          <div className="legacy-settings-row">
+            <span>Teams on this page</span>
             <input value={recapTeamsText} onChange={(event) => setRecapTeamsText(event.target.value)} placeholder="ATL, LAD, NYY" />
-            <span>Teams visible in the recap workflow.</span>
-          </label>
-          <label>
-            Automatic email teams
-            <input value={autoTeamsText} onChange={(event) => setAutoTeamsText(event.target.value)} placeholder="ATL, LAD" />
-            <span>Teams checked for postgame auto-send.</span>
-          </label>
-          <label>
-            Finalized replay teams
-            <input value={finalizedTeamsText} onChange={(event) => setFinalizedTeamsText(event.target.value)} placeholder="ATL, LAD" />
-            <span>Teams whose emails wait for canonical replay detail before delivery.</span>
-          </label>
-        </article>
-
-        <article className="panel settings-form">
-          <p className="eyebrow">Recipients</p>
-          <h3>{team.abbr} recipients</h3>
-          <label>
-            Recipient emails
-            <textarea value={recipientsText} onChange={(event) => setRecipientsText(event.target.value)} placeholder="ops@example.com, pitching@example.com" />
-            <span>Comma-separated list for the selected club.</span>
-          </label>
-          <div className="recipient-preview">
-            {parseCsvList(recipientsText).length === 0 ? (
-              <span>No recipients configured for {team.abbr}.</span>
-            ) : (
-              parseCsvList(recipientsText).map((recipient) => <em key={recipient}>{recipient}</em>)
-            )}
+            <em>These clubs appear in the recap workflow, quick picks, and recipient list.</em>
           </div>
-        </article>
-      </div>
+          <div className="legacy-settings-row">
+            <span>Automatic email teams</span>
+            <input value={autoTeamsText} onChange={(event) => setAutoTeamsText(event.target.value)} placeholder="ATL, LAD, NYY" />
+            <em>Only these teams are checked for automatic postgame email delivery.</em>
+          </div>
+          <div className="legacy-settings-row">
+            <span>Finalized replay teams</span>
+            <input value={finalizedTeamsText} onChange={(event) => setFinalizedTeamsText(event.target.value)} placeholder="ATL, LAD, NYY" />
+            <em>For these teams, recap emails wait for canonical replay detail before anything is sent.</em>
+          </div>
+          <div className="legacy-settings-row recipient-block-row">
+            <span>Recipients by team</span>
+            <div className="recipient-team-table">
+              {configuredTeams.map((abbr) => (
+                <label key={abbr} className="recipient-team-row">
+                  <strong>{abbr}</strong>
+                  <input
+                    value={recipientsByTeam[abbr] ?? ""}
+                    onChange={(event) =>
+                      setRecipientsByTeam((current) => ({
+                        ...current,
+                        [abbr]: event.target.value,
+                      }))
+                    }
+                    placeholder="ops@example.com, pitching@example.com"
+                  />
+                </label>
+              ))}
+            </div>
+            <em>Comma-separated recipients. Newly added teams appear here immediately.</em>
+          </div>
+        </div>
+        {status ? <p className="settings-status-message">{status}</p> : null}
+      </article>
     </section>
   );
 }
