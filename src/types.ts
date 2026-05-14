@@ -438,25 +438,8 @@ export type PitchingRecapPitcher = {
   pitch_count: number;
   innings_pitched: number;
   runs_allowed_total: number;
-  earned_runs_total?: number | null;
-  hits_allowed?: number | null;
-  walks?: number | null;
-  strikeouts?: number | null;
-  home_runs?: number | null;
-  boxscore?: {
-    ip?: string | number | null;
-    h?: number | null;
-    r?: number | null;
-    er?: number | null;
-    bb?: number | null;
-    so?: number | null;
-    hr?: number | null;
-    np?: number | null;
-  } | null;
   rss_score?: number | null;
   rss_label?: string | null;
-  rss_has_measurement?: boolean | null;
-  bullpen_signal?: Record<string, unknown> | null;
   first_alert_status?: string | null;
   first_alert_inning?: number | null;
   first_alert_pitch_count?: number | null;
@@ -503,8 +486,6 @@ export type PitchingRecapEmailResponse = {
   game_id: string;
   subject?: string;
   recap: PitchingGameRecap;
-  html?: string;
-  text?: string;
   sent?: boolean;
   sent_to?: string[];
   failed_recipients?: string[];
