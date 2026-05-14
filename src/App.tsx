@@ -500,6 +500,20 @@ function relieverOutcomeCopy(pitcher: PitchingRecapPitcher): string {
   return `${runs} in ${innings}; ${exit}. ${after}`;
 }
 
+function relieverRssComponent(pitcher: PitchingRecapPitcher, key: string): number | null {
+  return looseNumber(pitcher.bullpen_signal, [key]);
+}
+
+function relieverRssComponents(pitcher: PitchingRecapPitcher): Array<{ label: string; value: number | null }> {
+  return [
+    { label: "Stuff", value: relieverRssComponent(pitcher, "rss_stuff") },
+    { label: "Command", value: relieverRssComponent(pitcher, "rss_command") },
+    { label: "Outcome", value: relieverRssComponent(pitcher, "rss_outcome") },
+    { label: "Handoff", value: relieverRssComponent(pitcher, "rss_handoff_risk") },
+    { label: "Usage", value: relieverRssComponent(pitcher, "rss_usage_fatigue") },
+  ];
+}
+
 function entryEventLabel(
   selected: PitchingReplayEntry,
   previous: PitchingReplayEntry | null,
@@ -909,7 +923,7 @@ function useRunSavingBoard({ league, team, limit }: { league: "mlb" | "triple_a"
   return { loadState, payload, error, reload: load };
 }
 
-function usePreventableRunsOpportunities({ season, team, limit }: { season: string; team: string; limit: number }) {
+function usePreventableRunsOpportunities({ season, team, gameId, limit }: { season: string; team: string; gameId?: string | null; limit: number }) {
   const [payload, setPayload] = useState<PreventableRunsOpportunitiesPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -918,7 +932,7 @@ function usePreventableRunsOpportunities({ season, team, limit }: { season: stri
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchPreventableRunsOpportunities({ season, team, limit });
+      const data = await fetchPreventableRunsOpportunities({ season, team, gameId, limit });
       setPayload(data);
     } catch (caught) {
       setPayload(null);
@@ -926,7 +940,7 @@ function usePreventableRunsOpportunities({ season, team, limit }: { season: stri
     } finally {
       setLoading(false);
     }
-  }, [season, team, limit]);
+  }, [season, team, gameId, limit]);
 
   useEffect(() => {
     void load();
@@ -1579,6 +1593,14 @@ function GameAudit({
                     <div>
                       <strong>{relieverRssLabel(pitcher)}</strong>
                       <span>{relieverRssTimingCopy(pitcher)}</span>
+                      <div className="rss-component-grid">
+                        {relieverRssComponents(pitcher).map((component) => (
+                          <span key={component.label} className="rss-component">
+                            <em>{component.label}</em>
+                            <b>{component.value == null ? UNAVAILABLE : fmtNumber(component.value, 2)}</b>
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     <div>
                       <strong>Outcome</strong>
@@ -2251,7 +2273,7 @@ export default function App() {
     error: preventableRunsError,
     loading: preventableRunsLoading,
     reload: reloadPreventableRuns,
-  } = usePreventableRunsOpportunities({ season, team: selectedTeam.abbr, limit: 5000 });
+  } = usePreventableRunsOpportunities({ season, team: selectedTeam.abbr, gameId: selectedGameId, limit: 5000 });
   const apiBase = getConfiguredApiBase();
 
   const loadRecapSettings = useCallback(async () => {

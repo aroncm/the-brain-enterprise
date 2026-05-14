@@ -217,11 +217,12 @@ function normalizePreventableRunsPayload(value: unknown): PreventableRunsOpportu
 }
 
 export function fetchPreventableRunsOpportunities(
-  query: { season?: number | string; team?: string; limit?: number } = {},
+  query: { season?: number | string; team?: string; gameId?: string | null; limit?: number } = {},
 ): Promise<PreventableRunsOpportunitiesPayload> {
   const params = new URLSearchParams();
   if (query.season) params.set("season", String(query.season));
   if (query.team) params.set("team", query.team);
+  if (query.gameId) params.set("game_id", query.gameId);
   if (query.limit != null) params.set("limit", String(query.limit));
   return fetchJson<unknown>(`/v1/pitching/preventable-runs/opportunities?${params.toString()}`).then(normalizePreventableRunsPayload);
 }
