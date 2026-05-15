@@ -259,16 +259,37 @@ function teamLogoUrl(abbr: string): string | null {
 }
 
 function pitchCount(entry: PitchingReplayEntry): number {
-  const state = entry.snapshot.starter_state;
+  const state = replayState(entry);
   return state.official_pitch_count_in_game ?? state.pitch_count_in_game ?? state.replay_pitch_count_in_game ?? 0;
 }
 
+function isRelieverReplayEntry(entry: PitchingReplayEntry | null | undefined): boolean {
+  if (!entry) return false;
+  return entry.entry_type === "reliever_rss" || statusLabel(entry.snapshot.role) === "RELIEVER" || !!entry.snapshot.reliever_state;
+}
+
+function replayState(entry: PitchingReplayEntry) {
+  return entry.snapshot.reliever_state ?? entry.snapshot.starter_state;
+}
+
+function replayStatus(entry: PitchingReplayEntry): string {
+  if (isRelieverReplayEntry(entry)) return statusLabel(replayState(entry).rss_status ?? entry.recommendation.status ?? "OK");
+  return statusLabel(entry.recommendation.status);
+}
+
+function appearanceKey(entry: PitchingReplayEntry): string {
+  return `${isRelieverReplayEntry(entry) ? "reliever" : "starter"}:${entry.snapshot.fielding_team}:${entry.snapshot.pitcher_id}:${entry.snapshot.team_appearance_order ?? 1}`;
+}
+
 function stuffScore(entry: PitchingReplayEntry): number {
-  return Math.max(20, Math.min(100, Math.round(100 - (entry.snapshot.starter_state.degradation_score ?? 0) * 22)));
+  if (isRelieverReplayEntry(entry)) {
+    return Math.max(0, Math.min(100, Math.round((1 - (replayState(entry).rss_score ?? 0)) * 100)));
+  }
+  return Math.max(20, Math.min(100, Math.round(100 - (replayState(entry).degradation_score ?? 0) * 22)));
 }
 
 function velocityDrop(entry: PitchingReplayEntry): number | null {
-  const state = entry.snapshot.starter_state;
+  const state = replayState(entry);
   if (state.velo_mean_5 == null || state.seasonal_velo_baseline == null) return null;
   return state.velo_mean_5 - state.seasonal_velo_baseline;
 }
@@ -303,9 +324,9 @@ function signalClass(status: string): string {
 }
 
 function monotonicStatuses(entries: PitchingReplayEntry[]): string[] {
-  let current = "STAY";
+  let current = entries.some(isRelieverReplayEntry) ? "OK" : "STAY";
   return entries.map((entry) => {
-    current = maxStatus(current, statusLabel(entry.recommendation.status));
+    current = maxStatus(current, replayStatus(entry));
     return current;
   });
 }
@@ -463,7 +484,7 @@ function pullWindowMetrics(entry: PitchingReplayEntry | null): { stuff: string; 
   if (!entry) {
     return { stuff: UNAVAILABLE, decay: UNAVAILABLE, degradation: UNAVAILABLE };
   }
-  const state = entry.snapshot.starter_state;
+  const state = replayState(entry);
   const decay = (state.inning_decay_factor ?? 0) + (state.tto_decay_factor ?? 0);
   return {
     stuff: `${stuffScore(entry)}/100`,
@@ -1302,11 +1323,50 @@ function GameAudit({
   preventableRows: PreventableRunsOpportunityRow[];
 }) {
   const [pitchIndex, setPitchIndex] = useState(0);
+  const [appearance, setAppearance] = useState<string | null>(null);
   const [autoplay, setAutoplay] = useState(false);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
-  const entries = useMemo(
-    () => (replay?.entries ?? []).filter((entry) => entry.snapshot.fielding_team === team.abbr).sort((a, b) => pitchCount(a) - pitchCount(b)),
+  const teamReplayEntries = useMemo(
+    () =>
+      ([...(replay?.entries ?? []), ...(replay?.reliever_entries ?? [])])
+        .filter((entry) => entry.snapshot.fielding_team === team.abbr)
+        .sort((a, b) => {
+          const order = (a.snapshot.team_appearance_order ?? 1) - (b.snapshot.team_appearance_order ?? 1);
+          return order || pitchCount(a) - pitchCount(b);
+        }),
     [replay, team.abbr],
+  );
+  const appearances = useMemo(() => {
+    const grouped = new Map<string, { key: string; label: string; role: string; count: number; firstPitch: number }>();
+    for (const entry of teamReplayEntries) {
+      const key = appearanceKey(entry);
+      const role = isRelieverReplayEntry(entry) ? "Reliever" : "Starter";
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.count += 1;
+        existing.firstPitch = Math.min(existing.firstPitch, pitchCount(entry));
+        continue;
+      }
+      grouped.set(key, {
+        key,
+        role,
+        label: `${entry.snapshot.pitcher_name} · ${role}`,
+        count: 1,
+        firstPitch: pitchCount(entry),
+      });
+    }
+    return Array.from(grouped.values()).sort((a, b) => {
+      const roleOrder = a.role === b.role ? 0 : a.role === "Starter" ? -1 : 1;
+      return roleOrder || a.firstPitch - b.firstPitch;
+    });
+  }, [teamReplayEntries]);
+  const selectedAppearanceKey = appearances.some((item) => item.key === appearance) ? appearance : appearances[0]?.key ?? null;
+  const entries = useMemo(
+    () =>
+      teamReplayEntries
+        .filter((entry) => appearanceKey(entry) === selectedAppearanceKey)
+        .sort((a, b) => pitchCount(a) - pitchCount(b)),
+    [selectedAppearanceKey, teamReplayEntries],
   );
   const selectedIndex = Math.min(pitchIndex, Math.max(0, entries.length - 1));
   const displayStatuses = useMemo(() => monotonicStatuses(entries), [entries]);
@@ -1320,13 +1380,16 @@ function GameAudit({
   const teamRelievers = teamPitchers.filter((pitcher) => statusLabel(pitcher.role) === "RELIEVER");
   const keyPitcher = teamStarters.find((pitcher) => pitcher.first_pull_now_inning != null || pitcher.first_alert_inning != null) ?? teamStarters[0] ?? teamPitchers[0] ?? null;
   const pullIndex = displayStatuses.findIndex((status) => statusRank(status) >= statusRank("PULL NOW"));
+  const relieverActionIndex = displayStatuses.findIndex((status) => statusRank(status) >= statusRank("WATCH"));
+  const actionIndex = selected && isRelieverReplayEntry(selected) ? relieverActionIndex : pullIndex;
   const pullEntry = pullIndex >= 0 ? entries[pullIndex] ?? null : null;
   const pullMetrics = pullWindowMetrics(pullEntry);
   const pullBestCandidate = pullEntry?.top_candidates?.find((candidate) => candidate.available) ?? pullEntry?.top_candidates?.[0] ?? null;
   const pullDecisionDelta = pullEntry?.recommendation.decision_delta ?? selected?.recommendation.decision_delta ?? null;
   const hasWatchSignal = statusRank(displayStatus) >= statusRank("WATCH");
   const bestCandidate = selected?.top_candidates?.find((candidate) => candidate.available) ?? selected?.top_candidates?.[0] ?? null;
-  const selectedState = selected?.snapshot.starter_state ?? null;
+  const selectedState = selected ? replayState(selected) : null;
+  const selectedIsReliever = isRelieverReplayEntry(selected);
   const selectedOpportunity = opportunityForPitch(selected, preventableRows, selectedGameId);
   const selectedPreventableRuns = preventableRunsForPitch(selected, selectedOpportunity);
   const eventLabel = selected && replay ? entryEventLabel(selected, previous, displayStatus, previousStatus, replay) : null;
@@ -1365,6 +1428,11 @@ function GameAudit({
     setAutoplay(false);
     setEmailStatus(null);
   }, [selectedGameId]);
+
+  useEffect(() => {
+    setPitchIndex(0);
+    setAutoplay(false);
+  }, [selectedAppearanceKey]);
 
   useEffect(() => {
     if (!autoplay || entries.length <= 1) return;
@@ -1420,7 +1488,7 @@ function GameAudit({
         <>
           <article className="panel replay-panel">
             <div className={`signal-banner signal-${signalClass(displayStatus)}`}>
-              <strong>{displayStatus}</strong>
+              <strong>{selectedIsReliever ? `RSS ${displayStatus}` : displayStatus}</strong>
             </div>
             {eventLabel ? (
               <div className={`event-callout event-callout--${eventLabel.tone}`}>
@@ -1439,7 +1507,7 @@ function GameAudit({
                   <span>Bases <strong>{baseStateLabel(selected.snapshot.base_state)}</strong></span>
                   <span>Outs <strong>{outsLabel(selected.snapshot.outs)}</strong></span>
                   <span>Pitch count <strong>{pitchCount(selected)}</strong></span>
-                  <span>Times through order <strong>{selected.snapshot.starter_state.times_through_order}</strong></span>
+                  <span>{selectedIsReliever ? "Batters faced" : "Times through order"} <strong>{selectedIsReliever ? selectedState?.batters_faced_in_game ?? "—" : selectedState?.times_through_order}</strong></span>
                   <span>Score <strong>{scoreForEntry(selected, replay)}</strong></span>
                 </div>
               </aside>
@@ -1450,13 +1518,13 @@ function GameAudit({
                 <p className="eyebrow">Decision Read</p>
                 <div className="decision-score-row">
                   <div className="degradation-ring" style={{ "--ring": `${Math.round(clamp(degradationPressure) * 100)}%` } as CSSProperties}>
-                    <strong>{fmtNumber(selected.snapshot.starter_state.enhanced_degradation_score ?? selected.snapshot.starter_state.degradation_score, 2)}</strong>
+                    <strong>{fmtNumber(selectedState?.enhanced_degradation_score ?? selectedState?.degradation_score, 2)}</strong>
                     <span>degradation</span>
                   </div>
                   <div>
                     <span>Preventable Runs</span>
-                    <strong>{fmtRuns(selectedPreventableRuns)}</strong>
-                    <em>{selectedOpportunity ? "Calibrated opportunity model" : "Not attached to this pitch window"}</em>
+                    <strong>{selectedIsReliever ? "Reliever RSS" : fmtRuns(selectedPreventableRuns)}</strong>
+                    <em>{selectedIsReliever ? `RSS ${fmtNumber(selectedState?.rss_score, 2)}` : selectedOpportunity ? "Calibrated opportunity model" : "Not attached to this pitch window"}</em>
                   </div>
                 </div>
                 <div className="decision-gauge-grid">
@@ -1467,7 +1535,11 @@ function GameAudit({
                 </div>
                 <div className="decision-delta">
                   <strong>{hasWatchSignal ? "Relief decision delta" : "Relief context unlocks at WATCH"}</strong>
-                  {hasWatchSignal ? (
+                  {selectedIsReliever ? (
+                    <p>
+                      This bullpen view tracks the reliever’s own RSS: stuff, command, outcome, handoff, and workload pressure after entering the game.
+                    </p>
+                  ) : hasWatchSignal ? (
                     <p>
                       {bestCandidate?.player_name || "Best alternative"} changes the next-batter pocket by{" "}
                       <b>{fmtSigned(selected.recommendation.decision_delta, 2)}</b> runs versus staying with the starter.
@@ -1483,6 +1555,22 @@ function GameAudit({
               </aside>
             </div>
 
+            {appearances.length > 1 ? (
+              <div className="appearance-switcher">
+                {appearances.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={item.key === selectedAppearanceKey ? "active" : ""}
+                    onClick={() => setAppearance(item.key)}
+                  >
+                    {item.label}
+                    <span>{item.count} pitches</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
             <SignalTimeline entries={entries} statuses={displayStatuses} selectedIndex={selectedIndex} onSelect={setPitchIndex} />
             <div className="pitch-controls">
               <button type="button" onClick={() => setPitchIndex(Math.max(0, pitchIndex - 1))}>Previous</button>
@@ -1497,7 +1585,9 @@ function GameAudit({
                 {autoplay ? "Pause" : "Autoplay"}
               </button>
               <button type="button" onClick={() => setPitchIndex(Math.min(entries.length - 1, pitchIndex + 1))}>Next</button>
-              <button type="button" disabled={pullIndex < 0} onClick={() => setPitchIndex(pullIndex >= 0 ? pullIndex : pitchIndex)}>Jump to Pull Now</button>
+              <button type="button" disabled={actionIndex < 0} onClick={() => setPitchIndex(actionIndex >= 0 ? actionIndex : pitchIndex)}>
+                {selectedIsReliever ? "Jump to RSS Signal" : "Jump to Pull Now"}
+              </button>
             </div>
           </article>
 
@@ -1579,7 +1669,7 @@ function GameAudit({
                 <div>
                   <p className="eyebrow">Reliever Stress Signal</p>
                   <h3>Bullpen outcomes from the same game.</h3>
-                  <p>Relievers are reported from the finalized recap payload. Pitch-level RSS replay views will require reliever-state replay entries from the backend.</p>
+                  <p>Relievers are now available as their own pitch-by-pitch RSS replay stream when the finalized artifact includes bullpen entries.</p>
                 </div>
                 <SourceTag label="Finalized recap RSS" source="model" />
               </div>

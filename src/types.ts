@@ -286,7 +286,62 @@ export type PitcherProfilesPayload = {
   profiles: PitcherProfile[];
 };
 
+export type PitchingReplayState = {
+  pitch_count_in_game: number;
+  official_pitch_count_in_game?: number | null;
+  replay_pitch_count_in_game?: number | null;
+  times_through_order: number;
+  base_state: string;
+  leverage_index: number;
+  velo_mean_5: number;
+  seasonal_velo_baseline: number;
+  spin_mean_5?: number | null;
+  spin_mean_10?: number | null;
+  spin_mean_15?: number | null;
+  spin_slope_5?: number | null;
+  seasonal_spin_baseline?: number | null;
+  velo_mean_10?: number | null;
+  velo_mean_15?: number | null;
+  velo_slope_5?: number | null;
+  location_dispersion_10: number;
+  location_dispersion_5?: number | null;
+  zone_miss_distance_10: number;
+  zone_miss_distance_5?: number | null;
+  hard_contact_rate_15: number;
+  whiff_rate_15?: number | null;
+  ball_rate_10?: number | null;
+  strike_rate_10?: number | null;
+  strike_rate_stability?: number | null;
+  called_strike_rate_15?: number | null;
+  chase_proxy_rate_15?: number | null;
+  opponent_adjusted_whiff_drop?: number | null;
+  opponent_whiff_factor?: number | null;
+  pitch_mix_drift_10?: number | null;
+  degradation_score: number;
+  normalized_degradation_score?: number | null;
+  enhanced_degradation_score?: number | null;
+  empirical_degradation_percentile?: number | null;
+  pitcher_empirical_degradation_percentile?: number | null;
+  empirical_degradation_sample_count?: number | null;
+  pitcher_empirical_degradation_sample_count?: number | null;
+  inning_decay_factor?: number | null;
+  tto_decay_factor?: number | null;
+  batters_faced_in_game?: number | null;
+  official_batters_faced_in_game?: number | null;
+  component_contributions?: Record<string, number>;
+  normalized_component_scores?: Record<string, number>;
+  sourceStatus?: string | null;
+  rss_stuff?: number | null;
+  rss_command?: number | null;
+  rss_outcome?: number | null;
+  rss_handoff_risk?: number | null;
+  rss_usage_fatigue?: number | null;
+  rss_score?: number | null;
+  rss_status?: string | null;
+};
+
 export type PitchingReplayEntry = {
+  entry_type?: string;
   snapshot: {
     pitch_id: string;
     pitcher_id: string;
@@ -305,52 +360,19 @@ export type PitchingReplayEntry = {
     pz?: number | null;
     pitch_type?: string | null;
     release_speed?: number | null;
-    starter_state: {
-      pitch_count_in_game: number;
-      official_pitch_count_in_game?: number | null;
-      replay_pitch_count_in_game?: number | null;
-      times_through_order: number;
-      base_state: string;
-      leverage_index: number;
-      velo_mean_5: number;
-      seasonal_velo_baseline: number;
-      spin_mean_5?: number | null;
-      spin_mean_10?: number | null;
-      spin_mean_15?: number | null;
-      spin_slope_5?: number | null;
-      seasonal_spin_baseline?: number | null;
-      velo_mean_10?: number | null;
-      velo_mean_15?: number | null;
-      velo_slope_5?: number | null;
-      location_dispersion_10: number;
-      location_dispersion_5?: number | null;
-      zone_miss_distance_10: number;
-      zone_miss_distance_5?: number | null;
-      hard_contact_rate_15: number;
-      whiff_rate_15?: number | null;
-      ball_rate_10?: number | null;
-      strike_rate_10?: number | null;
-      strike_rate_stability?: number | null;
-      called_strike_rate_15?: number | null;
-      chase_proxy_rate_15?: number | null;
-      opponent_adjusted_whiff_drop?: number | null;
-      opponent_whiff_factor?: number | null;
-      pitch_mix_drift_10?: number | null;
-      degradation_score: number;
-      normalized_degradation_score?: number | null;
-      enhanced_degradation_score?: number | null;
-      empirical_degradation_percentile?: number | null;
-      pitcher_empirical_degradation_percentile?: number | null;
-      empirical_degradation_sample_count?: number | null;
-      pitcher_empirical_degradation_sample_count?: number | null;
-      inning_decay_factor?: number | null;
-      tto_decay_factor?: number | null;
-      batters_faced_in_game?: number | null;
-      official_batters_faced_in_game?: number | null;
-      component_contributions?: Record<string, number>;
-      normalized_component_scores?: Record<string, number>;
-      sourceStatus?: string | null;
+    role?: string | null;
+    team_appearance_order?: number | null;
+    current_opponent_runs?: number | null;
+    reliever_state?: PitchingReplayState & {
+      rss_stuff?: number | null;
+      rss_command?: number | null;
+      rss_outcome?: number | null;
+      rss_handoff_risk?: number | null;
+      rss_usage_fatigue?: number | null;
+      rss_score?: number | null;
+      rss_status?: string | null;
     };
+    starter_state: PitchingReplayState;
   };
   recommendation: {
     status: string;
@@ -391,6 +413,8 @@ export type PitchingReplayResponse = {
     actual_changes_within_next_pocket: number;
   };
   entries: PitchingReplayEntry[];
+  reliever_entries?: PitchingReplayEntry[];
+  reliever_summary?: Array<Record<string, unknown>>;
 };
 
 export type PitchingAuditWindow = Record<string, unknown> & {
