@@ -476,6 +476,43 @@ select {
   gap: 10px;
 }
 
+.matrix-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0 14px;
+}
+
+.matrix-filter-row button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--navy);
+  padding: 10px 13px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.matrix-filter-row button.active {
+  border-color: rgba(17, 26, 45, 0.35);
+  background: var(--navy);
+  color: #fff;
+}
+
+.matrix-filter-row button.target:not(.active) {
+  border-color: rgba(164, 59, 52, 0.28);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.matrix-filter-row span {
+  margin-left: 8px;
+  opacity: 0.72;
+}
+
 .calibrated-row {
   display: grid;
   grid-template-columns: 1.05fr 1.2fr 0.85fr 0.75fr 1.1fr;

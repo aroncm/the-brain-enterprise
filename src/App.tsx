@@ -14,12 +14,10 @@ import {
   savePitchingRecapSettings,
 } from "./api";
 import type {
-  AuditRow,
   BullpenOption,
   EnterpriseGameSummary,
   PitcherProfile,
   PitcherProfilesPayload,
-  PitcherDecision,
   PitchingAuditSummaryPayload,
   PitchingAuditWindow,
   PitchingGameRecap,
@@ -567,16 +565,6 @@ function entryEventLabel(
   };
 }
 
-function matrixCellForDecision(decision: PitcherDecision, bestOption: BullpenOption | null): MatrixCell {
-  const lateStuff = avg(decision.stuffCurve.slice(-2));
-  const starterAbove = (lateStuff ?? 50) >= 55 && (decision.cliffProbability ?? 0.5) < 0.6;
-  const penAbove = (bestOption?.netOptionScore ?? bestOption?.matchupFit ?? 0) >= 0.45;
-  if (starterAbove && penAbove) return "standard";
-  if (!starterAbove && penAbove) return "tandem";
-  if (starterAbove && !penAbove) return "push";
-  return "workload";
-}
-
 function matrixCellForWindow(window: PitchingAuditWindow): MatrixCell {
   const starter = record(window.starter);
   const candidate = record(window.top_candidate);
@@ -586,13 +574,6 @@ function matrixCellForWindow(window: PitchingAuditWindow): MatrixCell {
   if (!starterAbove && penAbove) return "tandem";
   if (starterAbove && !penAbove) return "push";
   return "workload";
-}
-
-function auditSeverity(row: AuditRow): number {
-  if (row.timing === "Late") return 4;
-  if (row.timing === "Held") return 3;
-  if (row.timing === "Early") return 2;
-  return 1;
 }
 
 function gameLabel(game: EnterpriseGameSummary | null): string {
@@ -976,6 +957,20 @@ type CalibratedGameOpportunity = {
   pitcherCount: number;
 };
 
+type OpportunityWindowRow = {
+  id: string;
+  gameId: string;
+  game: string;
+  pitcher: string;
+  recommended: string;
+  actual: string;
+  alternative: string;
+  detail: string;
+  runs: number | null;
+  severity: number;
+  cell: MatrixCell;
+};
+
 function CalibratedOpportunityRow({
   opportunity,
   onOpenGameAudit,
@@ -1025,6 +1020,54 @@ function CalibratedOpportunityRow({
   );
 }
 
+function OpportunityWindowTable({
+  rows,
+  onOpenAudit,
+  onOpenGameAudit,
+}: {
+  rows: OpportunityWindowRow[];
+  onOpenAudit: () => void;
+  onOpenGameAudit: (gameId: string) => void;
+}) {
+  if (rows.length === 0) {
+    return <EmptyState title="No audit cases returned" detail="No finalized audit rows matched this matrix bucket for the selected season." />;
+  }
+  return (
+    <div className="opportunity-table">
+      <div className="table-head">
+        <span>Game / Pitcher</span>
+        <span>Model Window</span>
+        <span>Actual Move</span>
+        <span>Best Alternative</span>
+        <span>Preventable Runs</span>
+      </div>
+      {rows.map((row) => (
+        <button
+          key={row.id}
+          type="button"
+          className="table-row"
+          onClick={() => (row.gameId ? onOpenGameAudit(row.gameId) : onOpenAudit())}
+        >
+          <span>
+            <strong>{row.pitcher}</strong>
+            <em>{row.game}</em>
+          </span>
+          <span>
+            <strong>{row.recommended}</strong>
+            <em>{row.detail}</em>
+          </span>
+          <span>
+            <strong>{row.actual}</strong>
+            <em>{normalize(row.cell)}</em>
+          </span>
+          <span>{row.alternative}</span>
+          <span className="runs">{fmtRuns(row.runs)}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function calibratedGameKey(row: PreventableRunsOpportunityRow): string {
   return row.gameId || [row.gameDate ?? "date", row.team ?? "team", row.opponent ?? "opponent"].join("|");
 }
@@ -1063,9 +1106,7 @@ function CommandCenter({
   preventableRunsError,
   preventableRunsLoading,
   profiles,
-  audits,
   auditSummary,
-  bullpenOptions,
   onOpenAudit,
   onOpenGameAudit,
 }: {
@@ -1075,9 +1116,7 @@ function CommandCenter({
   preventableRunsError: string | null;
   preventableRunsLoading: boolean;
   profiles: PitcherProfile[];
-  audits: AuditRow[];
   auditSummary: PitchingAuditSummaryPayload | null;
-  bullpenOptions: BullpenOption[];
   onOpenAudit: () => void;
   onOpenGameAudit: (gameId: string) => void;
 }) {
@@ -1089,14 +1128,6 @@ function CommandCenter({
     calibratedSummary?.totalProjectedPreventableRuns ?? sum(calibratedRows.map((row) => row.projectedPreventableRuns));
   const displayedRuns = calibratedSummary || calibratedRows.length > 0 ? calibratedRuns : seasonRuns || boardRuns;
   const windows = auditWindows(auditSummary);
-  const bestOption = bullpenOptions.slice().sort((a, b) => (b.netOptionScore ?? -Infinity) - (a.netOptionScore ?? -Infinity))[0] ?? null;
-  const decisionMatrix = payload.decisions.reduce(
-    (counts, decision) => {
-      counts[matrixCellForDecision(decision, bestOption)] += 1;
-      return counts;
-    },
-    { standard: 0, tandem: 0, push: 0, workload: 0 },
-  );
   const auditMatrix = windows.reduce(
     (counts, window) => {
       counts[matrixCellForWindow(window)] += 1;
@@ -1105,24 +1136,14 @@ function CommandCenter({
     { standard: 0, tandem: 0, push: 0, workload: 0 },
   );
   const [matrixFilter, setMatrixFilter] = useState<MatrixCell | "all">("all");
-  const boardRows = audits.map((row) => ({
-    id: row.id,
-    game: row.game,
-    pitcher: row.pitcher || row.decision,
-    recommended: row.recommendedDecision || row.decision,
-    actual: row.actualDecision || UNAVAILABLE,
-    alternative: row.bestAlternative || UNAVAILABLE,
-    detail: row.inning || row.timing,
-    runs: row.projectedRunsSaved ?? row.modelImpliedRunsSaved ?? null,
-    severity: auditSeverity(row),
-    cell: null as MatrixCell | null,
-  }));
-  const windowRows = windows.map((window, index) => {
+  const windowRows: OpportunityWindowRow[] = windows.map((window, index) => {
     const starter = record(window.starter);
     const candidate = record(window.top_candidate);
     const cell = matrixCellForWindow(window);
+    const gameId = String(window.game_id ?? window.game_pk ?? "");
     return {
-      id: `${String(window.game_id ?? window.game_pk ?? "window")}-${index}`,
+      id: `${gameId || "window"}-${index}`,
+      gameId,
       game: `${String(window.game_date ?? window.matchup ?? window.game_id ?? "Game")}`,
       pitcher: String(window.pitcher_name ?? starter.pitcher_name ?? window.pitcher ?? "Pitcher"),
       recommended: statusLabel(String(window.status ?? "Decision")),
@@ -1134,10 +1155,9 @@ function CommandCenter({
       cell,
     };
   });
-  const opportunityRows = (matrixFilter === "all" ? [...boardRows, ...windowRows] : windowRows.filter((row) => row.cell === matrixFilter))
+  const opportunityRows = (matrixFilter === "all" ? windowRows : windowRows.filter((row) => row.cell === matrixFilter))
     .sort((a, b) => (b.runs ?? -Infinity) - (a.runs ?? -Infinity) || b.severity - a.severity)
     .slice(0, 8);
-  const topProfile = profiles.slice().sort((a, b) => (b.projectedRunsSaved ?? -Infinity) - (a.projectedRunsSaved ?? -Infinity))[0] ?? null;
   const topCalibratedGames = groupCalibratedOpportunitiesByGame(calibratedRows).slice(0, 6);
 
   return (
@@ -1156,7 +1176,7 @@ function CommandCenter({
       <div className="kpi-row">
         <KPI label="Preventable Run Exposure" value={fmtRuns(displayedRuns)} detail="Season-to-date estimate of where better staff deployment may have reduced scoring." tone="gold" />
         <KPI label="Games to Review" value={String(topCalibratedGames.length || opportunityRows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
-        <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem || decisionMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
+        <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
         <KPI label="Pitchers Covered" value={String(profiles.length)} detail={`${payload.summary.sourceGameCount ?? 0} games included in the current evidence set.`} />
       </div>
 
@@ -1208,98 +1228,24 @@ function CommandCenter({
             </div>
           </>
         )}
-      </article>
-
-      <div className="two-column">
-        <article className="panel matrix-panel">
-          <div className="panel-title">
-            <p className="eyebrow">Deployment Matrix</p>
-            <h3>Where staff decisions become run-prevention opportunities.</h3>
-          </div>
-          <div className="matrix-grid">
-            <button type="button" onClick={() => setMatrixFilter("standard")} className="matrix-cell">
-              <span>Above-average starter · above-average pen</span>
-              <strong>Standard usage</strong>
-              <em>{auditMatrix.standard || decisionMatrix.standard} cases</em>
-            </button>
-            <button type="button" onClick={() => setMatrixFilter("tandem")} className="matrix-cell target">
-              <span>Below-average starter · above-average pen</span>
-              <strong>Tandem opportunity</strong>
-              <em>{auditMatrix.tandem || decisionMatrix.tandem} cases</em>
-            </button>
-            <button type="button" onClick={() => setMatrixFilter("push")} className="matrix-cell">
-              <span>Above-average starter · thin pen</span>
-              <strong>Push the starter</strong>
-              <em>{auditMatrix.push || decisionMatrix.push} cases</em>
-            </button>
-            <button type="button" onClick={() => setMatrixFilter("workload")} className="matrix-cell">
-              <span>Below-average starter · thin pen</span>
-              <strong>Workload management</strong>
-              <em>{auditMatrix.workload || decisionMatrix.workload} cases</em>
-            </button>
-          </div>
-          <button type="button" className="text-button" onClick={() => setMatrixFilter("all")}>
-            Show all opportunity cases
+        <div className="matrix-filter-row" aria-label="Deployment matrix filters">
+          <button type="button" className={matrixFilter === "all" ? "active" : ""} onClick={() => setMatrixFilter("all")}>
+            All audit cases <span>{windowRows.length}</span>
           </button>
-        </article>
-
-        <article className="panel insight-panel">
-          <p className="eyebrow">What to do first</p>
-          <h3>{topProfile ? `Start with ${topProfile.pitcher}` : "Start with finalized game audits"}</h3>
-          <p>
-            {topProfile
-              ? `${topProfile.pitcher} carries ${fmtRuns(topProfile.projectedRunsSaved)} preventable runs across ${topProfile.appearances} appearances. Use the game log to determine whether this is repeat late-start decay, bullpen constraint, or roster fit.`
-              : "Once pitcher profiles are available, this card will identify the first staff member to review."}
-          </p>
-          <div className="source-row">
-            <SourceTag label="Pitch facts" source="official" />
-            <SourceTag label="Degradation model" source="model" />
-            <SourceTag label="Availability" source="rule" />
-          </div>
-        </article>
-      </div>
-
-      <article className="panel">
-        <div className="panel-title horizontal">
-          <div>
-            <p className="eyebrow">Opportunity List</p>
-            <h3>Highest-priority windows to audit.</h3>
-          </div>
-          <button type="button" onClick={onOpenAudit}>
-            Open Game Audit
+          <button type="button" className={matrixFilter === "standard" ? "active" : ""} onClick={() => setMatrixFilter("standard")}>
+            Standard usage <span>{auditMatrix.standard}</span>
+          </button>
+          <button type="button" className={matrixFilter === "tandem" ? "active target" : "target"} onClick={() => setMatrixFilter("tandem")}>
+            Tandem opportunity <span>{auditMatrix.tandem}</span>
+          </button>
+          <button type="button" className={matrixFilter === "push" ? "active" : ""} onClick={() => setMatrixFilter("push")}>
+            Push starter <span>{auditMatrix.push}</span>
+          </button>
+          <button type="button" className={matrixFilter === "workload" ? "active" : ""} onClick={() => setMatrixFilter("workload")}>
+            Workload management <span>{auditMatrix.workload}</span>
           </button>
         </div>
-        {opportunityRows.length === 0 ? (
-          <EmptyState title="No audit cases returned" detail="The board has no finalized audit rows for the selected club yet." />
-        ) : (
-          <div className="opportunity-table">
-            <div className="table-head">
-              <span>Game / Pitcher</span>
-              <span>Model Window</span>
-              <span>Actual Move</span>
-              <span>Best Alternative</span>
-              <span>Preventable Runs</span>
-            </div>
-            {opportunityRows.map((row) => (
-              <button key={row.id} type="button" className="table-row" onClick={onOpenAudit}>
-                <span>
-                  <strong>{row.pitcher}</strong>
-                  <em>{row.game}</em>
-                </span>
-                <span>
-                  <strong>{row.recommended}</strong>
-                  <em>{row.detail}</em>
-                </span>
-                <span>
-                  <strong>{row.actual}</strong>
-                  <em>{row.cell ? normalize(row.cell) : "Board audit row"}</em>
-                </span>
-                <span>{row.alternative}</span>
-                <span className="runs">{fmtRuns(row.runs)}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <OpportunityWindowTable rows={opportunityRows} onOpenAudit={onOpenAudit} onOpenGameAudit={onOpenGameAudit} />
       </article>
     </section>
   );
@@ -1325,7 +1271,6 @@ function GameAudit({
   const [pitchIndex, setPitchIndex] = useState(0);
   const [appearance, setAppearance] = useState<string | null>(null);
   const [autoplay, setAutoplay] = useState(false);
-  const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const teamReplayEntries = useMemo(
     () =>
       ([...(replay?.entries ?? []), ...(replay?.reliever_entries ?? [])])
@@ -1426,7 +1371,6 @@ function GameAudit({
   useEffect(() => {
     setPitchIndex(0);
     setAutoplay(false);
-    setEmailStatus(null);
   }, [selectedGameId]);
 
   useEffect(() => {
@@ -1449,18 +1393,6 @@ function GameAudit({
   useEffect(() => {
     if (selectedIndex >= entries.length - 1) setAutoplay(false);
   }, [entries.length, selectedIndex]);
-
-  async function handleSendRecapEmail() {
-    if (!selectedGameId) return;
-    setEmailStatus("Sending briefing...");
-    try {
-      const response = await sendPitchingRecapEmail({ game_id: selectedGameId, team: team.abbr, send: true }, "mlb");
-      const recipients = response.sent_to?.length ? response.sent_to.join(", ") : response.recipients?.join(", ");
-      setEmailStatus(response.sent ? `Briefing sent${recipients ? ` to ${recipients}` : ""}.` : "Briefing generated, but no email was sent.");
-    } catch (caught) {
-      setEmailStatus(caught instanceof Error ? caught.message : String(caught));
-    }
-  }
 
   return (
     <section className="workflow">
@@ -1730,32 +1662,6 @@ function GameAudit({
             </div>
           </article>
 
-          <article className="panel recap-panel">
-            <div className="panel-title horizontal">
-              <div>
-                <p className="eyebrow">Game Briefing</p>
-                <h3>Email-ready recap.</h3>
-                <p>Same delivery path as the existing pitching recaps, with this enterprise view summarizing the staff-deployment opportunity first.</p>
-              </div>
-              <button type="button" onClick={handleSendRecapEmail}>
-                Send briefing
-              </button>
-            </div>
-            <div className="recap-briefing">
-              <div>
-                <strong>{team.abbr} pitching summary</strong>
-                <p>{teamPitcherRecapCopy(keyPitcher)}</p>
-              </div>
-              <div>
-                <strong>What to review</strong>
-                <p>{keyPitcher?.missed_hook ? "The model flagged a possible earlier move; use the replay to review the bullpen alternative and game context." : "Review whether the staff decision matched the available bullpen path and game leverage."}</p>
-              </div>
-              <div>
-                <strong>Delivery status</strong>
-                <p>{emailStatus ?? "Use Send briefing to deliver through the configured recap email route for this game and team."}</p>
-              </div>
-            </div>
-          </article>
         </>
       )}
     </section>
@@ -2454,7 +2360,6 @@ export default function App() {
   }, [selectedGameId]);
 
   const profiles = profilesPayload?.profiles ?? [];
-  const audits = payload?.audits ?? [];
   const bullpenOptions = payload?.bullpenOptions ?? [];
   const tripleA = tripleAPayload?.tripleAConversionCandidates ?? payload?.tripleAConversionCandidates ?? [];
 
@@ -2502,9 +2407,7 @@ export default function App() {
           preventableRunsError={preventableRunsError}
           preventableRunsLoading={preventableRunsLoading}
           profiles={profiles}
-          audits={audits}
           auditSummary={auditSummary}
-          bullpenOptions={bullpenOptions}
           onOpenAudit={() => setWorkflow("audit")}
           onOpenGameAudit={(gameId) => {
             setSelectedGameId(gameId);
