@@ -957,19 +957,53 @@ type CalibratedGameOpportunity = {
   pitcherCount: number;
 };
 
-type OpportunityWindowRow = {
-  id: string;
-  gameId: string;
-  game: string;
-  pitcher: string;
-  recommended: string;
-  actual: string;
-  alternative: string;
-  detail: string;
-  runs: number | null;
-  severity: number;
-  cell: MatrixCell;
-};
+function reviewPointLabel(row: PreventableRunsOpportunityRow): string {
+  const details = [halfInningLabel(row.half, row.inning), outsLabel(row.outs), baseStateLabel(row.baseState)];
+  if (row.pitchCount != null) details.push(`pitch ${row.pitchCount}`);
+  return details.join(" · ");
+}
+
+function reviewReasonLabels(row: PreventableRunsOpportunityRow): string[] {
+  const reasons: string[] = [];
+  const baseFlags = baseStateFlags(row.baseState);
+  const runners = Number(baseFlags.first) + Number(baseFlags.second) + Number(baseFlags.third);
+  if (runners >= 2) reasons.push("Runners in scoring position");
+  else if (runners === 1) reasons.push("Traffic on base");
+  if ((row.leverageIndex ?? 0) >= 1.5) reasons.push("Important game state");
+  if ((row.degradationScore ?? row.productionDegradation ?? row.normalizedDegradation ?? 0) >= 1) reasons.push("Starter was slipping");
+  if ((row.decayVelocity ?? 0) > 0 || (row.decayAcceleration ?? 0) > 0) reasons.push("Stuff trending down");
+  for (const feature of row.topFeatures ?? []) {
+    const label = categoryContributorLabel(feature.feature);
+    if (reasons.length >= 3) break;
+    if (!reasons.includes(label)) reasons.push(label);
+  }
+  return reasons.slice(0, 3);
+}
+
+function matrixBucketCopy(cell: MatrixCell): { title: string; detail: string } {
+  if (cell === "tandem") {
+    return {
+      title: "Tandem opportunities",
+      detail: "The starter was fading and the bullpen path deserved a closer look.",
+    };
+  }
+  if (cell === "push") {
+    return {
+      title: "Push-the-starter cases",
+      detail: "The model saw fewer gains from changing pitchers, usually because the alternative was not clearly better.",
+    };
+  }
+  if (cell === "workload") {
+    return {
+      title: "Workload-management cases",
+      detail: "The run-prevention difference was narrow, so the decision shifts toward rest, availability, and roster planning.",
+    };
+  }
+  return {
+    title: "Standard usage cases",
+    detail: "The observed decision generally matched the model's staff-allocation read.",
+  };
+}
 
 function CalibratedOpportunityRow({
   opportunity,
@@ -979,13 +1013,15 @@ function CalibratedOpportunityRow({
   onOpenGameAudit: (gameId: string) => void;
 }) {
   const { row, windowCount, pitcherCount } = opportunity;
-  const topDrivers = (row.topFeatures ?? [])
-    .filter((feature) => typeof feature.contribution === "number" && feature.contribution > 0)
-    .slice(0, 3);
-  const half = row.half ? normalize(row.half) : "Half unavailable";
-  const context = `${row.inning ?? "—"}${row.inning === 1 ? "st" : row.inning === 2 ? "nd" : row.inning === 3 ? "rd" : "th"} inning · ${half} · ${row.outs ?? "—"} out · Bases ${row.baseState ?? "—"}`;
+  const reviewReasons = reviewReasonLabels(row);
   const priority = Math.round((row.calibratedPreventableSignal ?? row.projectedDamageProbability ?? 0) * 100);
-  const reviewLevel = priority >= 95 ? "Immediate review" : priority >= 85 ? "High priority" : "Review";
+  const reviewLevel = priority >= 95 ? "Immediate staff review" : priority >= 85 ? "High-priority review" : "Staff review";
+  const preventableText =
+    row.projectedPreventableRuns != null
+      ? `${fmtRuns(row.projectedPreventableRuns)} run exposure`
+      : row.decisionDelta != null
+        ? `${fmtRuns(row.decisionDelta)} decision edge`
+        : "Run impact still calibrating";
 
   return (
     <button type="button" className="calibrated-row" onClick={() => row.gameId && onOpenGameAudit(row.gameId)}>
@@ -995,76 +1031,26 @@ function CalibratedOpportunityRow({
       </div>
       <div>
         <strong>{row.pitcherName}</strong>
-        <span>Best review point: {context}, pitch {row.pitchCount ?? "—"}</span>
+        <span>Review point: {reviewPointLabel(row)}</span>
       </div>
       <div>
         <strong>{reviewLevel}</strong>
-        <span>Priority score {priority}/100 · leverage {fmtNumber(row.leverageIndex, 2)}</span>
+        <span>{fmtPct(row.projectedDamageProbability)} chance of scoring damage · LI {fmtNumber(row.leverageIndex, 2)}</span>
       </div>
       <div>
-        <strong>{fmtPct(row.projectedDamageProbability)} damage risk</strong>
-        <span>Comparable situations: {fmtRuns(row.projectedPreventableRuns)} run band</span>
+        <strong>{preventableText}</strong>
+        <span>Priority {priority}/100 from comparable MLB situations</span>
       </div>
       <div className="driver-list">
-        {topDrivers.length === 0 ? (
-          <span className="driver-chip">Drivers unavailable</span>
+        {reviewReasons.length === 0 ? (
+          <span className="driver-chip">Open pitch audit</span>
         ) : (
-          topDrivers.map((feature) => (
-            <span key={feature.feature} className="driver-chip">
-              {featureLabel(feature.feature)}
-            </span>
+          reviewReasons.map((reason) => (
+            <span key={reason} className="driver-chip">{reason}</span>
           ))
         )}
       </div>
     </button>
-  );
-}
-
-function OpportunityWindowTable({
-  rows,
-  onOpenAudit,
-  onOpenGameAudit,
-}: {
-  rows: OpportunityWindowRow[];
-  onOpenAudit: () => void;
-  onOpenGameAudit: (gameId: string) => void;
-}) {
-  if (rows.length === 0) {
-    return <EmptyState title="No audit cases returned" detail="No finalized audit rows matched this matrix bucket for the selected season." />;
-  }
-  return (
-    <div className="opportunity-table">
-      <div className="table-head">
-        <span>Game / Pitcher</span>
-        <span>Model Window</span>
-        <span>Actual Move</span>
-        <span>Best Alternative</span>
-        <span>Preventable Runs</span>
-      </div>
-      {rows.map((row) => (
-        <button
-          key={row.id}
-          type="button"
-          className="table-row"
-          onClick={() => (row.gameId ? onOpenGameAudit(row.gameId) : onOpenAudit())}
-        >
-          <span>
-            <strong>{row.pitcher}</strong>
-            <em>{row.game}</em>
-          </span>
-          <span>
-            <strong>{row.recommended}</strong>
-            <em>{row.detail}</em>
-          </span>
-          <span>
-            <strong>{row.actual}</strong>
-            <em>{normalize(row.cell)}</em>
-          </span>
-          <span>{row.alternative}</span>
-          <span className="runs">{fmtRuns(row.runs)}</span>
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -1135,30 +1121,8 @@ function CommandCenter({
     },
     { standard: 0, tandem: 0, push: 0, workload: 0 },
   );
-  const [matrixFilter, setMatrixFilter] = useState<MatrixCell | "all">("all");
-  const windowRows: OpportunityWindowRow[] = windows.map((window, index) => {
-    const starter = record(window.starter);
-    const candidate = record(window.top_candidate);
-    const cell = matrixCellForWindow(window);
-    const gameId = String(window.game_id ?? window.game_pk ?? "");
-    return {
-      id: `${gameId || "window"}-${index}`,
-      gameId,
-      game: `${String(window.game_date ?? window.matchup ?? window.game_id ?? "Game")}`,
-      pitcher: String(window.pitcher_name ?? starter.pitcher_name ?? window.pitcher ?? "Pitcher"),
-      recommended: statusLabel(String(window.status ?? "Decision")),
-      actual: String(window.actual_outcome ?? window.note ?? "Observed decision pending"),
-      alternative: String(candidate.player_name ?? UNAVAILABLE),
-      detail: String(window.inning ?? "Inning unavailable"),
-      runs: num(window.projected_runs_saved) ?? num(window.estimated_runs_saved),
-      severity: cell === "tandem" ? 4 : cell === "workload" ? 3 : 2,
-      cell,
-    };
-  });
-  const opportunityRows = (matrixFilter === "all" ? windowRows : windowRows.filter((row) => row.cell === matrixFilter))
-    .sort((a, b) => (b.runs ?? -Infinity) - (a.runs ?? -Infinity) || b.severity - a.severity)
-    .slice(0, 8);
   const topCalibratedGames = groupCalibratedOpportunitiesByGame(calibratedRows).slice(0, 6);
+  const deploymentBuckets: MatrixCell[] = ["tandem", "push", "workload", "standard"];
 
   return (
     <section className="workflow">
@@ -1175,7 +1139,7 @@ function CommandCenter({
 
       <div className="kpi-row">
         <KPI label="Preventable Run Exposure" value={fmtRuns(displayedRuns)} detail="Season-to-date estimate of where better staff deployment may have reduced scoring." tone="gold" />
-        <KPI label="Games to Review" value={String(topCalibratedGames.length || opportunityRows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
+        <KPI label="Games to Review" value={String(topCalibratedGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
         <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
         <KPI label="Pitchers Covered" value={String(profiles.length)} detail={`${payload.summary.sourceGameCount ?? 0} games included in the current evidence set.`} />
       </div>
@@ -1228,24 +1192,27 @@ function CommandCenter({
             </div>
           </>
         )}
-        <div className="matrix-filter-row" aria-label="Deployment matrix filters">
-          <button type="button" className={matrixFilter === "all" ? "active" : ""} onClick={() => setMatrixFilter("all")}>
-            All audit cases <span>{windowRows.length}</span>
-          </button>
-          <button type="button" className={matrixFilter === "standard" ? "active" : ""} onClick={() => setMatrixFilter("standard")}>
-            Standard usage <span>{auditMatrix.standard}</span>
-          </button>
-          <button type="button" className={matrixFilter === "tandem" ? "active target" : "target"} onClick={() => setMatrixFilter("tandem")}>
-            Tandem opportunity <span>{auditMatrix.tandem}</span>
-          </button>
-          <button type="button" className={matrixFilter === "push" ? "active" : ""} onClick={() => setMatrixFilter("push")}>
-            Push starter <span>{auditMatrix.push}</span>
-          </button>
-          <button type="button" className={matrixFilter === "workload" ? "active" : ""} onClick={() => setMatrixFilter("workload")}>
-            Workload management <span>{auditMatrix.workload}</span>
-          </button>
+        <div className="deployment-summary">
+          <div>
+            <p className="eyebrow">Pitcher Allocation Map</p>
+            <h4>How the cases break down.</h4>
+            <p>
+              These buckets summarize the same finalized audit cases without exposing raw model rows. Open the game rows above to inspect the pitch-by-pitch evidence.
+            </p>
+          </div>
+          <div className="deployment-bucket-grid">
+            {deploymentBuckets.map((bucket) => {
+              const copy = matrixBucketCopy(bucket);
+              return (
+                <div key={bucket} className={bucket === "tandem" ? "deployment-bucket target" : "deployment-bucket"}>
+                  <strong>{auditMatrix[bucket]}</strong>
+                  <span>{copy.title}</span>
+                  <p>{copy.detail}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <OpportunityWindowTable rows={opportunityRows} onOpenAudit={onOpenAudit} onOpenGameAudit={onOpenGameAudit} />
       </article>
     </section>
   );
