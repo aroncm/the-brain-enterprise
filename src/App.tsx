@@ -958,6 +958,13 @@ type CalibratedGameOpportunity = {
   cell: MatrixCell;
 };
 
+type SeasonAuditGameOpportunity = {
+  row: PitchingAuditWindow;
+  windowCount: number;
+  pitcherCount: number;
+  cell: MatrixCell;
+};
+
 function reviewPointLabel(row: PreventableRunsOpportunityRow): string {
   const details = [halfInningLabel(row.half, row.inning), outsLabel(row.outs), baseStateLabel(row.baseState)];
   if (row.pitchCount != null) details.push(`pitch ${row.pitchCount}`);
@@ -1104,6 +1111,192 @@ function groupCalibratedOpportunitiesByGame(rows: PreventableRunsOpportunityRow[
     .sort((a, b) => calibratedPriorityValue(b.row) - calibratedPriorityValue(a.row));
 }
 
+function auditWindowId(window: PitchingAuditWindow): string {
+  return String(
+    window.window_id ??
+      window.start_pitch_id ??
+      window.pitch_id ??
+      [
+        window.game_id ?? window.game_pk ?? window.matchup ?? "game",
+        window.inning ?? "inning",
+        window.half ?? "half",
+        record(window.starter).pitch_count_in_game ?? "pitch",
+        record(window.starter).pitcher_id ?? record(window.starter).pitcher_name ?? "pitcher",
+      ].join(":"),
+  );
+}
+
+function uniqueAuditWindows(windows: PitchingAuditWindow[]): PitchingAuditWindow[] {
+  const seen = new Set<string>();
+  const unique: PitchingAuditWindow[] = [];
+  for (const window of windows) {
+    const id = auditWindowId(window);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(window);
+  }
+  return unique;
+}
+
+function auditGameKey(window: PitchingAuditWindow): string {
+  return String(window.game_id ?? window.game_pk ?? `${window.game_date ?? window.date ?? "date"}:${window.matchup ?? "matchup"}`);
+}
+
+function auditGameDate(window: PitchingAuditWindow): string | null {
+  const value = window.game_date ?? window.date;
+  return typeof value === "string" ? value : null;
+}
+
+function auditPitcherName(window: PitchingAuditWindow): string {
+  const starter = record(window.starter);
+  return String(starter.pitcher_name ?? window.pitcher_name ?? window.pitcher ?? "Pitcher");
+}
+
+function auditPitcherId(window: PitchingAuditWindow): string {
+  const starter = record(window.starter);
+  return String(starter.pitcher_id ?? window.pitcher_id ?? auditPitcherName(window));
+}
+
+function auditPitchCount(window: PitchingAuditWindow): number | null {
+  return num(record(window.starter).pitch_count_in_game ?? window.pitch_count);
+}
+
+function auditStatus(window: PitchingAuditWindow): string {
+  return statusLabel(window.first_actionable_status ?? window.status ?? record(window.recommendation).status);
+}
+
+function auditPriorityValue(window: PitchingAuditWindow): number {
+  const statusScore = statusRank(auditStatus(window)) * 20;
+  const decisionDelta = Math.max(0, num(window.decision_delta) ?? 0) * 8;
+  const winDelta = Math.max(0, num(window.estimated_win_probability_delta) ?? num(window.directional_wp_opportunity) ?? 0) * 100;
+  const leverage = Math.max(0, num(window.leverage_index) ?? 0) * 5;
+  const starter = record(window.starter);
+  const degradation = Math.max(0, num(starter.degradation_score) ?? num(starter.enhanced_degradation_score) ?? 0) * 10;
+  return statusScore + decisionDelta + winDelta + leverage + degradation;
+}
+
+function auditTeams(window: PitchingAuditWindow): { team: string; opponent: string; matchup: string } {
+  const team = String(window.decision_team ?? window.team ?? "").trim();
+  const opponent = String(window.opponent_team ?? window.opponent ?? "").trim();
+  const matchup = String(window.matchup ?? (team && opponent ? `${opponent} @ ${team}` : "Game")).trim();
+  if (team || opponent) return { team, opponent, matchup };
+  const parts = matchup.split("@").map((part) => part.trim());
+  if (parts.length === 2) return { opponent: parts[0], team: parts[1], matchup };
+  return { team: "Team", opponent: "Opponent", matchup };
+}
+
+function auditReviewPointLabel(window: PitchingAuditWindow): string {
+  const details = [
+    halfInningLabel(typeof window.half === "string" ? window.half : null, num(window.inning)),
+    outsLabel(num(window.outs)),
+    baseStateLabel(typeof window.base_state === "string" ? window.base_state : null),
+  ];
+  const pitch = auditPitchCount(window);
+  if (pitch != null) details.push(`pitch ${pitch}`);
+  return details.join(" · ");
+}
+
+function auditWindowReasonLabels(window: PitchingAuditWindow): string[] {
+  const reasons: string[] = [];
+  const baseFlags = baseStateFlags(typeof window.base_state === "string" ? window.base_state : null);
+  const runners = Number(baseFlags.first) + Number(baseFlags.second) + Number(baseFlags.third);
+  if (runners >= 2) reasons.push("Runners in scoring position");
+  else if (runners === 1) reasons.push("Traffic on base");
+  if ((num(window.leverage_index) ?? 0) >= 1.5) reasons.push("Important game state");
+  const starter = record(window.starter);
+  if ((num(starter.degradation_score) ?? num(starter.enhanced_degradation_score) ?? 0) >= 1) reasons.push("Starter was slipping");
+  const topReasons = Array.isArray(window.top_reasons) ? window.top_reasons : [];
+  for (const reason of topReasons) {
+    if (reasons.length >= 3) break;
+    const label = featureLabel(String(reason).toLowerCase());
+    if (!reasons.includes(label)) reasons.push(label);
+  }
+  return reasons.slice(0, 3);
+}
+
+function auditRunExposureLabel(window: PitchingAuditWindow): string {
+  const projected =
+    num(window.projected_runs_saved) ??
+    num(window.estimated_runs_saved) ??
+    num(window.model_implied_runs_saved) ??
+    num(window.directional_wp_opportunity) ??
+    null;
+  if (projected != null) return `${fmtRuns(projected)} run exposure`;
+  const delta = num(window.decision_delta);
+  if (delta != null) return `${fmtSigned(delta, 2)} decision edge`;
+  return "Run impact not estimated";
+}
+
+function groupSeasonAuditWindowsByGame(windows: PitchingAuditWindow[]): SeasonAuditGameOpportunity[] {
+  const grouped = new Map<string, { best: PitchingAuditWindow; windows: PitchingAuditWindow[] }>();
+  for (const window of uniqueAuditWindows(windows)) {
+    const key = auditGameKey(window);
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { best: window, windows: [window] });
+      continue;
+    }
+    existing.windows.push(window);
+    if (auditPriorityValue(window) > auditPriorityValue(existing.best)) {
+      existing.best = window;
+    }
+  }
+  return Array.from(grouped.values())
+    .map((group) => ({
+      row: group.best,
+      windowCount: group.windows.length,
+      pitcherCount: new Set(group.windows.map(auditPitcherId).filter(Boolean)).size,
+      cell: matrixCellForWindow(group.best),
+    }))
+    .sort((a, b) => auditPriorityValue(b.row) - auditPriorityValue(a.row));
+}
+
+function SeasonAuditOpportunityRow({
+  opportunity,
+  onOpenGameAudit,
+}: {
+  opportunity: SeasonAuditGameOpportunity;
+  onOpenGameAudit: (gameId: string) => void;
+}) {
+  const { row, windowCount, pitcherCount } = opportunity;
+  const teams = auditTeams(row);
+  const reasons = auditWindowReasonLabels(row);
+  const priority = Math.min(100, Math.round(auditPriorityValue(row)));
+  const bucketCopy = matrixBucketCopy(opportunity.cell);
+  const reviewLevel = priority >= 90 ? "Immediate staff review" : priority >= 70 ? "High-priority review" : "Staff review";
+  const gameId = String(row.game_id ?? row.game_pk ?? "");
+
+  return (
+    <button type="button" className="calibrated-row" onClick={() => gameId && onOpenGameAudit(gameId)}>
+      <div>
+        <strong>{teams.matchup}</strong>
+        <span>{formatDateText(auditGameDate(row))} · {windowCount} flagged situation{windowCount === 1 ? "" : "s"} · {pitcherCount} pitcher{pitcherCount === 1 ? "" : "s"}</span>
+      </div>
+      <div>
+        <strong>{auditPitcherName(row)}</strong>
+        <span>Review point: {auditReviewPointLabel(row)}</span>
+      </div>
+      <div>
+        <strong>{reviewLevel}</strong>
+        <span>{bucketCopy.title} · {auditStatus(row)}</span>
+      </div>
+      <div>
+        <strong>{auditRunExposureLabel(row)}</strong>
+        <span>Priority {priority}/100 from the season audit inventory</span>
+      </div>
+      <div className="driver-list">
+        {reasons.length === 0 ? (
+          <span className="driver-chip">Open pitch audit</span>
+        ) : (
+          reasons.map((reason) => (
+            <span key={reason} className="driver-chip">{reason}</span>
+          ))
+        )}
+      </div>
+    </button>
+  );
+}
+
 function CommandCenter({
   team,
   payload,
@@ -1136,24 +1329,42 @@ function CommandCenter({
   const deploymentBuckets: MatrixCell[] = ["tandem", "push", "workload", "standard"];
   const [allocationFilter, setAllocationFilter] = useState<MatrixCell | "all">("all");
   const allCalibratedGames = groupCalibratedOpportunitiesByGame(calibratedRows);
-  const auditMatrix = allCalibratedGames.reduce(
+  const allSeasonAuditGames = groupSeasonAuditWindowsByGame(windows);
+  const bucketSourceGames = allSeasonAuditGames.length > 0 ? allSeasonAuditGames : allCalibratedGames;
+  const auditMatrix = bucketSourceGames.reduce(
     (counts, opportunity) => {
       counts[opportunity.cell] += 1;
       return counts;
     },
     { standard: 0, tandem: 0, push: 0, workload: 0 },
   );
+  const filteredSeasonAuditGames =
+    allocationFilter === "all" ? allSeasonAuditGames : allSeasonAuditGames.filter((opportunity) => opportunity.cell === allocationFilter);
   const filteredCalibratedGames =
     allocationFilter === "all" ? allCalibratedGames : allCalibratedGames.filter((opportunity) => opportunity.cell === allocationFilter);
-  const visibleCalibratedGames = filteredCalibratedGames;
   const selectedBucketCopy = allocationFilter === "all" ? null : matrixBucketCopy(allocationFilter);
+  const visibleSeasonAuditGames = filteredSeasonAuditGames.length > 0 || allSeasonAuditGames.length > 0 ? filteredSeasonAuditGames : [];
+  const visibleCalibratedGames = visibleSeasonAuditGames.length > 0 ? [] : filteredCalibratedGames;
+  const visibleGameCount = visibleSeasonAuditGames.length || visibleCalibratedGames.length;
+  const visibleWindowCount = visibleSeasonAuditGames.length > 0
+    ? sum(visibleSeasonAuditGames.map((opportunity) => opportunity.windowCount))
+    : selectedBucketCopy
+      ? visibleCalibratedGames.length
+      : calibratedSummary?.windowCount ?? preventableRuns?.rowCount ?? visibleCalibratedGames.length;
+  const visibleAvgLeverage =
+    visibleSeasonAuditGames.length > 0
+      ? sum(visibleSeasonAuditGames.map((opportunity) => num(opportunity.row.leverage_index) ?? 0)) / visibleSeasonAuditGames.length
+      : null;
   const nonEmptyBucketCount = deploymentBuckets.filter((bucket) => auditMatrix[bucket] > 0).length;
   const allocationMapDetail =
     nonEmptyBucketCount === 1
-      ? "These counts are from the current review queue, not the full season decision inventory. This queue is already narrowed to the clearest preventable-run cases, so it can concentrate in one decision type."
-      : "These counts are calculated from the same game rows in this review queue, not the full season decision inventory.";
+      ? "These counts are from the season audit inventory. If one bucket dominates, it means the current model is classifying this club's reviewed cases into one primary staff-allocation question."
+      : "These counts are calculated from the season audit inventory. Select a decision type to show the games in that bucket.";
   const queuePitcherCount = new Set(
-    calibratedRows.map((row) => row.pitcherId || row.pitcherName).filter((pitcher): pitcher is string => Boolean(pitcher)),
+    [
+      ...calibratedRows.map((row) => row.pitcherId || row.pitcherName),
+      ...allSeasonAuditGames.map((opportunity) => auditPitcherId(opportunity.row)),
+    ].filter((pitcher): pitcher is string => Boolean(pitcher)),
   ).size;
   const coveredPitcherCount = profiles.length || queuePitcherCount;
   const coveredPitcherDetail =
@@ -1176,7 +1387,7 @@ function CommandCenter({
 
       <div className="kpi-row">
         <KPI label="Preventable Run Exposure" value={fmtRuns(displayedRuns)} detail="Season-to-date estimate of where better staff deployment may have reduced scoring." tone="gold" />
-        <KPI label="Games to Review" value={String(allCalibratedGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
+        <KPI label="Games to Review" value={String(bucketSourceGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
         <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
         <KPI label="Pitchers Covered" value={String(coveredPitcherCount)} detail={coveredPitcherDetail} />
       </div>
@@ -1192,13 +1403,16 @@ function CommandCenter({
                 : "One row per game. Each row identifies the point where the club had the clearest opportunity to reconsider pitcher usage, then opens the pitch-level audit."}
             </p>
           </div>
-          <SourceTag label={preventableRuns?.status === "available" ? "Evidence ready" : preventableRunsLoading ? "Loading evidence" : "Evidence unavailable"} source={preventableRuns?.status === "available" ? "model" : "unavailable"} />
+          <SourceTag
+            label={bucketSourceGames.length > 0 ? "Evidence ready" : preventableRunsLoading ? "Loading evidence" : "Evidence unavailable"}
+            source={bucketSourceGames.length > 0 ? "model" : "unavailable"}
+          />
         </div>
-        {preventableRunsLoading ? (
+        {bucketSourceGames.length === 0 && preventableRunsLoading ? (
           <EmptyState title="Loading review queue" detail="Retrieving the current staff-deployment opportunity set." />
-        ) : preventableRunsError ? (
+        ) : bucketSourceGames.length === 0 && preventableRunsError ? (
           <EmptyState title="Review queue unavailable" detail={preventableRunsError} />
-        ) : visibleCalibratedGames.length === 0 ? (
+        ) : visibleGameCount === 0 ? (
           <EmptyState title="No games returned" detail="The evidence source is reachable, but no game-level review rows matched this club and season." />
         ) : (
           <>
@@ -1214,9 +1428,9 @@ function CommandCenter({
                   className={allocationFilter === "all" ? "deployment-bucket active" : "deployment-bucket"}
                   onClick={() => setAllocationFilter("all")}
                 >
-                  <strong>{allCalibratedGames.length}</strong>
+                  <strong>{bucketSourceGames.length}</strong>
                   <span>All review games</span>
-                  <p>Every game currently surfaced in the run-prevention queue.</p>
+                  <p>Every game currently surfaced in the season staff-allocation audit.</p>
                 </button>
                 {deploymentBuckets.map((bucket) => {
                   const copy = matrixBucketCopy(bucket);
@@ -1242,13 +1456,13 @@ function CommandCenter({
             <div className="calibrated-metrics">
               <KPI
                 label={selectedBucketCopy ? "Games in This Bucket" : "Reviewed Situations"}
-                value={String(selectedBucketCopy ? visibleCalibratedGames.length : calibratedSummary?.windowCount ?? preventableRuns?.rowCount ?? visibleCalibratedGames.length)}
-                detail={selectedBucketCopy ? "Visible queue rows after applying the allocation-map filter." : "Pitch-level situations screened for staff-deployment opportunity."}
+                value={String(selectedBucketCopy ? visibleGameCount : visibleWindowCount)}
+                detail={selectedBucketCopy ? "Visible game rows after applying the decision-type filter." : "Pitch-level situations screened for staff-deployment opportunity."}
               />
               <KPI
-                label="Avg Scoring Risk"
-                value={fmtPct(calibratedSummary?.avgProjectedDamageProbability)}
-                detail="Average risk that a flagged situation led to additional scoring."
+                label={visibleAvgLeverage == null ? "Avg Scoring Risk" : "Avg Leverage in View"}
+                value={visibleAvgLeverage == null ? fmtPct(calibratedSummary?.avgProjectedDamageProbability) : visibleAvgLeverage.toFixed(2)}
+                detail={visibleAvgLeverage == null ? "Average risk that a flagged situation led to additional scoring." : "Average leverage index across the visible game-review rows."}
                 tone="bad"
               />
               <KPI
@@ -1258,13 +1472,21 @@ function CommandCenter({
               />
             </div>
             <div className="calibrated-list">
-              {visibleCalibratedGames.map((opportunity) => (
-                <CalibratedOpportunityRow
-                  key={calibratedGameKey(opportunity.row)}
-                  opportunity={opportunity}
-                  onOpenGameAudit={onOpenGameAudit}
-                />
-              ))}
+              {visibleSeasonAuditGames.length > 0
+                ? visibleSeasonAuditGames.map((opportunity) => (
+                    <SeasonAuditOpportunityRow
+                      key={auditGameKey(opportunity.row)}
+                      opportunity={opportunity}
+                      onOpenGameAudit={onOpenGameAudit}
+                    />
+                  ))
+                : visibleCalibratedGames.map((opportunity) => (
+                    <CalibratedOpportunityRow
+                      key={calibratedGameKey(opportunity.row)}
+                      opportunity={opportunity}
+                      onOpenGameAudit={onOpenGameAudit}
+                    />
+                  ))}
             </div>
           </>
         )}
@@ -2328,7 +2550,7 @@ export default function App() {
         const [gamePayload, profilePayload, auditPayload] = await Promise.all([
           fetchEnterpriseGames({ league: "mlb", team: selectedTeam.abbr, limit: 300 }),
           fetchPitcherProfiles({ league: "mlb", team: selectedTeam.abbr, year: season, limit: 750 }),
-          fetchPitchingAuditSummary({ league: "mlb", team: selectedTeam.abbr, year: season, limit: 750 }),
+          fetchPitchingAuditSummary({ league: "mlb", team: selectedTeam.abbr, year: season, limit: 5000 }),
         ]);
         if (cancelled) return;
         setGames(gamePayload.games);
