@@ -591,21 +591,43 @@ select {
 
 .deployment-bucket-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
 .deployment-bucket {
+  width: 100%;
   min-height: 144px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.78);
+  color: var(--navy);
   padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
 .deployment-bucket.target {
   border-color: rgba(164, 59, 52, 0.28);
   background: linear-gradient(140deg, rgba(164, 59, 52, 0.12), rgba(255, 255, 255, 0.8));
+}
+
+.deployment-bucket:hover,
+.deployment-bucket.active {
+  border-color: rgba(17, 26, 45, 0.38);
+  box-shadow: 0 14px 32px rgba(17, 26, 45, 0.1);
+  transform: translateY(-1px);
+}
+
+.deployment-bucket.active {
+  background: var(--navy);
+}
+
+.deployment-bucket.active strong,
+.deployment-bucket.active span,
+.deployment-bucket.active p {
+  color: #fff;
 }
 
 .deployment-bucket strong,

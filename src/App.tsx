@@ -955,6 +955,7 @@ type CalibratedGameOpportunity = {
   row: PreventableRunsOpportunityRow;
   windowCount: number;
   pitcherCount: number;
+  cell: MatrixCell;
 };
 
 function reviewPointLabel(row: PreventableRunsOpportunityRow): string {
@@ -1005,6 +1006,22 @@ function matrixBucketCopy(cell: MatrixCell): { title: string; detail: string } {
   };
 }
 
+function allocationCellForOpportunity(row: PreventableRunsOpportunityRow): MatrixCell {
+  const degradation = row.degradationScore ?? row.productionDegradation ?? row.normalizedDegradation ?? 0;
+  const scoringRisk = row.projectedDamageProbability ?? row.calibratedPreventableSignal ?? 0;
+  const statusPressure = statusRank(row.status) >= statusRank("PULL NOW");
+  const starterFading = statusPressure || degradation >= 1.15 || scoringRisk >= 0.3;
+  const runEdge = row.projectedPreventableRuns ?? row.decisionDelta ?? 0;
+  const reliefEvidence =
+    runEdge > 0.05 ||
+    (row.topFeatures ?? []).some((feature) => featureCategory(feature.feature) === "Relief Alternative");
+
+  if (starterFading && reliefEvidence) return "tandem";
+  if (starterFading && !reliefEvidence) return "workload";
+  if (!starterFading && reliefEvidence) return "standard";
+  return "push";
+}
+
 function CalibratedOpportunityRow({
   opportunity,
   onOpenGameAudit,
@@ -1016,6 +1033,7 @@ function CalibratedOpportunityRow({
   const reviewReasons = reviewReasonLabels(row);
   const priority = Math.round((row.calibratedPreventableSignal ?? row.projectedDamageProbability ?? 0) * 100);
   const reviewLevel = priority >= 95 ? "Immediate staff review" : priority >= 85 ? "High-priority review" : "Staff review";
+  const bucketCopy = matrixBucketCopy(opportunity.cell);
   const preventableText =
     row.projectedPreventableRuns != null
       ? `${fmtRuns(row.projectedPreventableRuns)} run exposure`
@@ -1035,7 +1053,7 @@ function CalibratedOpportunityRow({
       </div>
       <div>
         <strong>{reviewLevel}</strong>
-        <span>{fmtPct(row.projectedDamageProbability)} chance of scoring damage · LI {fmtNumber(row.leverageIndex, 2)}</span>
+        <span>{bucketCopy.title} · {fmtPct(row.projectedDamageProbability)} chance of scoring damage</span>
       </div>
       <div>
         <strong>{preventableText}</strong>
@@ -1081,6 +1099,7 @@ function groupCalibratedOpportunitiesByGame(rows: PreventableRunsOpportunityRow[
       row: group.best,
       windowCount: group.windows.length,
       pitcherCount: new Set(group.windows.map((row) => row.pitcherId || row.pitcherName).filter(Boolean)).size,
+      cell: allocationCellForOpportunity(group.best),
     }))
     .sort((a, b) => calibratedPriorityValue(b.row) - calibratedPriorityValue(a.row));
 }
@@ -1114,15 +1133,20 @@ function CommandCenter({
     calibratedSummary?.totalProjectedPreventableRuns ?? sum(calibratedRows.map((row) => row.projectedPreventableRuns));
   const displayedRuns = calibratedSummary || calibratedRows.length > 0 ? calibratedRuns : seasonRuns || boardRuns;
   const windows = auditWindows(auditSummary);
-  const auditMatrix = windows.reduce(
-    (counts, window) => {
-      counts[matrixCellForWindow(window)] += 1;
+  const deploymentBuckets: MatrixCell[] = ["tandem", "push", "workload", "standard"];
+  const [allocationFilter, setAllocationFilter] = useState<MatrixCell | "all">("all");
+  const allCalibratedGames = groupCalibratedOpportunitiesByGame(calibratedRows);
+  const auditMatrix = allCalibratedGames.reduce(
+    (counts, opportunity) => {
+      counts[opportunity.cell] += 1;
       return counts;
     },
     { standard: 0, tandem: 0, push: 0, workload: 0 },
   );
-  const topCalibratedGames = groupCalibratedOpportunitiesByGame(calibratedRows).slice(0, 6);
-  const deploymentBuckets: MatrixCell[] = ["tandem", "push", "workload", "standard"];
+  const filteredCalibratedGames =
+    allocationFilter === "all" ? allCalibratedGames : allCalibratedGames.filter((opportunity) => opportunity.cell === allocationFilter);
+  const topCalibratedGames = filteredCalibratedGames.slice(0, 6);
+  const selectedBucketCopy = allocationFilter === "all" ? null : matrixBucketCopy(allocationFilter);
 
   return (
     <section className="workflow">
@@ -1139,7 +1163,7 @@ function CommandCenter({
 
       <div className="kpi-row">
         <KPI label="Preventable Run Exposure" value={fmtRuns(displayedRuns)} detail="Season-to-date estimate of where better staff deployment may have reduced scoring." tone="gold" />
-        <KPI label="Games to Review" value={String(topCalibratedGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
+        <KPI label="Games to Review" value={String(allCalibratedGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
         <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
         <KPI label="Pitchers Covered" value={String(profiles.length)} detail={`${payload.summary.sourceGameCount ?? 0} games included in the current evidence set.`} />
       </div>
@@ -1148,9 +1172,11 @@ function CommandCenter({
         <div className="panel-title horizontal">
           <div>
             <p className="eyebrow">Run Prevention Review Queue</p>
-            <h3>Start with these games.</h3>
+            <h3>{selectedBucketCopy ? selectedBucketCopy.title : "Start with these games."}</h3>
             <p>
-              One row per game. Each row identifies the point where the club had the clearest opportunity to reconsider pitcher usage, then opens the pitch-level audit.
+              {selectedBucketCopy
+                ? `${selectedBucketCopy.detail} The rows below are filtered to this allocation bucket.`
+                : "One row per game. Each row identifies the point where the club had the clearest opportunity to reconsider pitcher usage, then opens the pitch-level audit."}
             </p>
           </div>
           <SourceTag label={preventableRuns?.status === "available" ? "Evidence ready" : preventableRunsLoading ? "Loading evidence" : "Evidence unavailable"} source={preventableRuns?.status === "available" ? "model" : "unavailable"} />
@@ -1195,20 +1221,38 @@ function CommandCenter({
         <div className="deployment-summary">
           <div>
             <p className="eyebrow">Pitcher Allocation Map</p>
-            <h4>How the cases break down.</h4>
+            <h4>Filter the review queue by decision type.</h4>
             <p>
-              These buckets summarize the same finalized audit cases without exposing raw model rows. Open the game rows above to inspect the pitch-by-pitch evidence.
+              These buckets are calculated from the same game rows shown above. Select a bucket to show only those games in the queue.
             </p>
           </div>
           <div className="deployment-bucket-grid">
+            <button
+              type="button"
+              className={allocationFilter === "all" ? "deployment-bucket active" : "deployment-bucket"}
+              onClick={() => setAllocationFilter("all")}
+            >
+              <strong>{allCalibratedGames.length}</strong>
+              <span>All review games</span>
+              <p>Every game currently surfaced in the run-prevention queue.</p>
+            </button>
             {deploymentBuckets.map((bucket) => {
               const copy = matrixBucketCopy(bucket);
               return (
-                <div key={bucket} className={bucket === "tandem" ? "deployment-bucket target" : "deployment-bucket"}>
+                <button
+                  key={bucket}
+                  type="button"
+                  className={[
+                    "deployment-bucket",
+                    bucket === "tandem" ? "target" : "",
+                    allocationFilter === bucket ? "active" : "",
+                  ].filter(Boolean).join(" ")}
+                  onClick={() => setAllocationFilter(bucket)}
+                >
                   <strong>{auditMatrix[bucket]}</strong>
                   <span>{copy.title}</span>
                   <p>{copy.detail}</p>
-                </div>
+                </button>
               );
             })}
           </div>
