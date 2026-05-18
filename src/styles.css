@@ -577,6 +577,13 @@ select {
   padding-top: 20px;
 }
 
+.decision-filter-summary {
+  margin: 6px 0 20px;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 0 20px;
+}
+
 .deployment-summary h4 {
   margin: 0 0 6px;
   color: var(--navy);

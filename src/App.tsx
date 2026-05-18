@@ -1147,6 +1147,11 @@ function CommandCenter({
     allocationFilter === "all" ? allCalibratedGames : allCalibratedGames.filter((opportunity) => opportunity.cell === allocationFilter);
   const visibleCalibratedGames = filteredCalibratedGames;
   const selectedBucketCopy = allocationFilter === "all" ? null : matrixBucketCopy(allocationFilter);
+  const nonEmptyBucketCount = deploymentBuckets.filter((bucket) => auditMatrix[bucket] > 0).length;
+  const allocationMapDetail =
+    nonEmptyBucketCount === 1
+      ? "These counts are from the current review queue, not the full season decision inventory. This queue is already narrowed to the clearest preventable-run cases, so it can concentrate in one decision type."
+      : "These counts are calculated from the same game rows in this review queue, not the full season decision inventory.";
   const queuePitcherCount = new Set(
     calibratedRows.map((row) => row.pitcherId || row.pitcherName).filter((pitcher): pitcher is string => Boolean(pitcher)),
   ).size;
@@ -1197,6 +1202,43 @@ function CommandCenter({
           <EmptyState title="No games returned" detail="The evidence source is reachable, but no game-level review rows matched this club and season." />
         ) : (
           <>
+            <div className="deployment-summary decision-filter-summary">
+              <div>
+                <p className="eyebrow">Decision Type</p>
+                <h4>Choose the staff-allocation question to review.</h4>
+                <p>{allocationMapDetail}</p>
+              </div>
+              <div className="deployment-bucket-grid">
+                <button
+                  type="button"
+                  className={allocationFilter === "all" ? "deployment-bucket active" : "deployment-bucket"}
+                  onClick={() => setAllocationFilter("all")}
+                >
+                  <strong>{allCalibratedGames.length}</strong>
+                  <span>All review games</span>
+                  <p>Every game currently surfaced in the run-prevention queue.</p>
+                </button>
+                {deploymentBuckets.map((bucket) => {
+                  const copy = matrixBucketCopy(bucket);
+                  return (
+                    <button
+                      key={bucket}
+                      type="button"
+                      className={[
+                        "deployment-bucket",
+                        bucket === "tandem" ? "target" : "",
+                        allocationFilter === bucket ? "active" : "",
+                      ].filter(Boolean).join(" ")}
+                      onClick={() => setAllocationFilter(bucket)}
+                    >
+                      <strong>{auditMatrix[bucket]}</strong>
+                      <span>{copy.title}</span>
+                      <p>{copy.detail}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="calibrated-metrics">
               <KPI
                 label={selectedBucketCopy ? "Games in This Bucket" : "Reviewed Situations"}
@@ -1226,45 +1268,6 @@ function CommandCenter({
             </div>
           </>
         )}
-        <div className="deployment-summary">
-          <div>
-            <p className="eyebrow">Pitcher Allocation Map</p>
-            <h4>Filter the review queue by decision type.</h4>
-            <p>
-              These buckets are calculated from the same game rows shown above. Select a bucket to show only those games in the queue.
-            </p>
-          </div>
-          <div className="deployment-bucket-grid">
-            <button
-              type="button"
-              className={allocationFilter === "all" ? "deployment-bucket active" : "deployment-bucket"}
-              onClick={() => setAllocationFilter("all")}
-            >
-              <strong>{allCalibratedGames.length}</strong>
-              <span>All review games</span>
-              <p>Every game currently surfaced in the run-prevention queue.</p>
-            </button>
-            {deploymentBuckets.map((bucket) => {
-              const copy = matrixBucketCopy(bucket);
-              return (
-                <button
-                  key={bucket}
-                  type="button"
-                  className={[
-                    "deployment-bucket",
-                    bucket === "tandem" ? "target" : "",
-                    allocationFilter === bucket ? "active" : "",
-                  ].filter(Boolean).join(" ")}
-                  onClick={() => setAllocationFilter(bucket)}
-                >
-                  <strong>{auditMatrix[bucket]}</strong>
-                  <span>{copy.title}</span>
-                  <p>{copy.detail}</p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </article>
     </section>
   );
