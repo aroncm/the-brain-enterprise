@@ -1145,8 +1145,16 @@ function CommandCenter({
   );
   const filteredCalibratedGames =
     allocationFilter === "all" ? allCalibratedGames : allCalibratedGames.filter((opportunity) => opportunity.cell === allocationFilter);
-  const topCalibratedGames = filteredCalibratedGames.slice(0, 6);
+  const visibleCalibratedGames = filteredCalibratedGames;
   const selectedBucketCopy = allocationFilter === "all" ? null : matrixBucketCopy(allocationFilter);
+  const queuePitcherCount = new Set(
+    calibratedRows.map((row) => row.pitcherId || row.pitcherName).filter((pitcher): pitcher is string => Boolean(pitcher)),
+  ).size;
+  const coveredPitcherCount = profiles.length || queuePitcherCount;
+  const coveredPitcherDetail =
+    profiles.length > 0
+      ? `${payload.summary.sourceGameCount ?? 0} games included in the current evidence set.`
+      : `${queuePitcherCount} pitchers found in the prevention queue; profile artifact not available for this club/season.`;
 
   return (
     <section className="workflow">
@@ -1165,7 +1173,7 @@ function CommandCenter({
         <KPI label="Preventable Run Exposure" value={fmtRuns(displayedRuns)} detail="Season-to-date estimate of where better staff deployment may have reduced scoring." tone="gold" />
         <KPI label="Games to Review" value={String(allCalibratedGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
         <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
-        <KPI label="Pitchers Covered" value={String(profiles.length)} detail={`${payload.summary.sourceGameCount ?? 0} games included in the current evidence set.`} />
+        <KPI label="Pitchers Covered" value={String(coveredPitcherCount)} detail={coveredPitcherDetail} />
       </div>
 
       <article className="panel calibrated-panel">
@@ -1185,15 +1193,15 @@ function CommandCenter({
           <EmptyState title="Loading review queue" detail="Retrieving the current staff-deployment opportunity set." />
         ) : preventableRunsError ? (
           <EmptyState title="Review queue unavailable" detail={preventableRunsError} />
-        ) : topCalibratedGames.length === 0 ? (
+        ) : visibleCalibratedGames.length === 0 ? (
           <EmptyState title="No games returned" detail="The evidence source is reachable, but no game-level review rows matched this club and season." />
         ) : (
           <>
             <div className="calibrated-metrics">
               <KPI
-                label="Reviewed Situations"
-                value={String(calibratedSummary?.windowCount ?? preventableRuns?.rowCount ?? topCalibratedGames.length)}
-                detail="Pitch-level situations screened for staff-deployment opportunity."
+                label={selectedBucketCopy ? "Games in This Bucket" : "Reviewed Situations"}
+                value={String(selectedBucketCopy ? visibleCalibratedGames.length : calibratedSummary?.windowCount ?? preventableRuns?.rowCount ?? visibleCalibratedGames.length)}
+                detail={selectedBucketCopy ? "Visible queue rows after applying the allocation-map filter." : "Pitch-level situations screened for staff-deployment opportunity."}
               />
               <KPI
                 label="Avg Scoring Risk"
@@ -1208,7 +1216,7 @@ function CommandCenter({
               />
             </div>
             <div className="calibrated-list">
-              {topCalibratedGames.map((opportunity) => (
+              {visibleCalibratedGames.map((opportunity) => (
                 <CalibratedOpportunityRow
                   key={calibratedGameKey(opportunity.row)}
                   opportunity={opportunity}
