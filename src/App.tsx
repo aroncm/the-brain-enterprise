@@ -156,6 +156,11 @@ function fmtPct(value: number | null | undefined): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function fmtPctPoints(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return UNAVAILABLE;
+  return `${value > 0 ? "+" : ""}${(value * 100).toFixed(1)}pp`;
+}
+
 function fmtRate(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return UNAVAILABLE;
   return `${Math.round(value * 100)}%`;
@@ -235,6 +240,21 @@ function featureLabel(value: string | null | undefined): string {
     batter_quality: "Dangerous hitters due",
     inning_pitcher_penalty: "History in this inning",
     tto_pitcher_penalty: "History third time through",
+    starter_degradation: "Starter was slipping",
+    deg_li_threshold: "Degradation mattered in leverage",
+    starter_swstr_drop: "Whiffs falling",
+    starter_velo_drop: "Velocity down",
+    starter_spin_drop: "Spin fading",
+    starter_command_slip: "Command slipping",
+    starter_zone_miss: "Zone misses widening",
+    starter_hard_contact: "Hard contact pressure",
+    third_time_through_order: "Lineup seeing him again",
+    lefty_cluster_ahead: "Lefty cluster ahead",
+    reliever_matchup_edge: "Better relief matchup",
+    reliever_contrast_edge: "Relief option changed the look",
+    reliever_availability_edge: "Relief option available",
+    bullpen_thin_stay: "Bullpen was thin",
+    starter_late_inning_stuff: "Starter held late stuff",
   };
   return labels[value] ?? normalize(value);
 }
@@ -1219,11 +1239,12 @@ function auditRunExposureLabel(window: PitchingAuditWindow): string {
     num(window.projected_runs_saved) ??
     num(window.estimated_runs_saved) ??
     num(window.model_implied_runs_saved) ??
-    num(window.directional_wp_opportunity) ??
     null;
   if (projected != null) return `${fmtRuns(projected)} run exposure`;
   const delta = num(window.decision_delta);
   if (delta != null) return `${fmtSigned(delta, 2)} decision edge`;
+  const wpOpportunity = num(window.estimated_win_probability_delta) ?? num(window.directional_wp_opportunity);
+  if (wpOpportunity != null) return `${fmtPctPoints(wpOpportunity)} win-prob opportunity`;
   return "Run impact not estimated";
 }
 
@@ -1389,18 +1410,18 @@ function CommandCenter({
   const allocationMapDetail =
     nonEmptyBucketCount === 1
       ? "These counts are from the season audit inventory. If one bucket dominates, it means the current model is classifying this club's reviewed cases into one primary staff-allocation question."
-      : "These counts are calculated from the season audit inventory. Select a decision type to show the games with at least one audited window in that bucket.";
+      : "These counts are calculated from the season audit inventory. Buckets are overlapping: one game can contain windows in more than one staff-allocation bucket.";
   const queuePitcherCount = new Set(
     [
       ...calibratedRows.map((row) => row.pitcherId || row.pitcherName),
-      ...allSeasonAuditGames.map((opportunity) => auditPitcherId(opportunity.row)),
+      ...uniqueAuditWindows(windows).map(auditPitcherId),
     ].filter((pitcher): pitcher is string => Boolean(pitcher)),
   ).size;
-  const coveredPitcherCount = profiles.length || queuePitcherCount;
+  const coveredPitcherCount = queuePitcherCount || profiles.length;
   const coveredPitcherDetail =
-    profiles.length > 0
-      ? `${payload.summary.sourceGameCount ?? 0} games included in the current evidence set.`
-      : `${queuePitcherCount} pitchers found in the prevention queue; profile artifact not available for this club/season.`;
+    queuePitcherCount > 0
+      ? `${queuePitcherCount} unique pitchers surfaced in the season review queue.`
+      : `${profiles.length} pitcher profiles available; no season review queue pitchers were returned.`;
 
   return (
     <section className="workflow">
@@ -1417,9 +1438,9 @@ function CommandCenter({
 
       <div className="kpi-row">
         <KPI label="Preventable Run Exposure" value={fmtRuns(displayedRuns)} detail="Season-to-date estimate of where better staff deployment may have reduced scoring." tone="gold" />
-        <KPI label="Games to Review" value={String(bucketSourceGames.length || windows.length)} detail="Highest-priority games for pitching staff and front-office review." tone="bad" />
-        <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Cases where the starter was fading and a relief path deserved review." tone="bad" />
-        <KPI label="Pitchers Covered" value={String(coveredPitcherCount)} detail={coveredPitcherDetail} />
+        <KPI label="Games to Review" value={String(bucketSourceGames.length || windows.length)} detail="Unique games with at least one staff-allocation review window." tone="bad" />
+        <KPI label="Tandem Opportunities" value={String(auditMatrix.tandem)} detail="Unique games with at least one tandem review window; buckets can overlap." tone="bad" />
+        <KPI label="Pitchers in Review" value={String(coveredPitcherCount)} detail={coveredPitcherDetail} />
       </div>
 
       <article className="panel calibrated-panel">
@@ -1460,7 +1481,7 @@ function CommandCenter({
                 >
                   <strong>{bucketSourceGames.length}</strong>
                   <span>All review games</span>
-                  <p>Every game currently surfaced in the season staff-allocation audit. A game can appear in more than one decision type.</p>
+                  <p>Unique games currently surfaced in the season staff-allocation audit.</p>
                 </button>
                 {deploymentBuckets.map((bucket) => {
                   const copy = matrixBucketCopy(bucket);
@@ -1477,7 +1498,7 @@ function CommandCenter({
                     >
                       <strong>{auditMatrix[bucket]}</strong>
                       <span>{copy.title}</span>
-                      <p>{copy.detail}</p>
+                      <p>{copy.detail} A game may also appear in another bucket.</p>
                     </button>
                   );
                 })}
