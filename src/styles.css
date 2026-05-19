@@ -476,43 +476,6 @@ select {
   gap: 10px;
 }
 
-.matrix-filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 20px 0 14px;
-}
-
-.matrix-filter-row button {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--navy);
-  padding: 10px 13px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.matrix-filter-row button.active {
-  border-color: rgba(17, 26, 45, 0.35);
-  background: var(--navy);
-  color: #fff;
-}
-
-.matrix-filter-row button.target:not(.active) {
-  border-color: rgba(164, 59, 52, 0.28);
-  background: var(--red-soft);
-  color: var(--red);
-}
-
-.matrix-filter-row span {
-  margin-left: 8px;
-  opacity: 0.72;
-}
-
 .calibrated-row {
   display: grid;
   grid-template-columns: 1.05fr 1.2fr 0.85fr 0.75fr 1.1fr;
@@ -565,97 +528,6 @@ select {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.deployment-summary {
-  display: grid;
-  grid-template-columns: 0.72fr 1.28fr;
-  gap: 18px;
-  align-items: start;
-  margin-top: 22px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-}
-
-.decision-filter-summary {
-  margin: 6px 0 20px;
-  border-top: 0;
-  border-bottom: 1px solid var(--line);
-  padding: 0 0 20px;
-}
-
-.deployment-summary h4 {
-  margin: 0 0 6px;
-  color: var(--navy);
-  font-size: 26px;
-}
-
-.deployment-summary p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.48;
-}
-
-.deployment-bucket-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.deployment-bucket {
-  width: 100%;
-  min-height: 144px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.78);
-  color: var(--navy);
-  padding: 16px;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
-}
-
-.deployment-bucket.target {
-  border-color: rgba(164, 59, 52, 0.28);
-  background: linear-gradient(140deg, rgba(164, 59, 52, 0.12), rgba(255, 255, 255, 0.8));
-}
-
-.deployment-bucket:hover,
-.deployment-bucket.active {
-  border-color: rgba(17, 26, 45, 0.38);
-  box-shadow: 0 14px 32px rgba(17, 26, 45, 0.1);
-  transform: translateY(-1px);
-}
-
-.deployment-bucket.active {
-  background: var(--navy);
-}
-
-.deployment-bucket.active strong,
-.deployment-bucket.active span,
-.deployment-bucket.active p {
-  color: #fff;
-}
-
-.deployment-bucket strong,
-.deployment-bucket span {
-  display: block;
-}
-
-.deployment-bucket strong {
-  color: var(--navy);
-  font-size: 30px;
-}
-
-.deployment-bucket span {
-  margin-top: 6px;
-  color: var(--navy);
-  font-weight: 800;
-}
-
-.deployment-bucket p {
-  margin-top: 8px;
-  font-size: 12px;
 }
 
 .opportunity-table {
@@ -751,11 +623,6 @@ select {
 .signal-stay {
   background: var(--blue-soft);
   color: var(--navy);
-}
-
-.signal-ok {
-  background: rgba(49, 114, 85, 0.12);
-  color: var(--green);
 }
 
 .signal-distress {
@@ -1052,35 +919,6 @@ select {
   gap: 12px;
   align-items: center;
   padding: 0 22px 22px;
-}
-
-.appearance-switcher {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding: 0 22px 16px;
-}
-
-.appearance-switcher button {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--paper);
-  color: var(--navy);
-  padding: 10px 14px;
-  white-space: nowrap;
-}
-
-.appearance-switcher button.active {
-  background: var(--navy);
-  border-color: var(--navy);
-  color: #fff;
-}
-
-.appearance-switcher span {
-  display: block;
-  color: inherit;
-  font-size: 11px;
-  opacity: 0.7;
 }
 
 .pitch-controls input {
@@ -2084,20 +1922,18 @@ select {
 @media (max-width: 1100px) {
   .app-header,
   .two-column,
-	  .roster-actions,
-	  .replay-layout,
-	  .deployment-summary,
-	  .briefing-settings-grid {
-	    grid-template-columns: 1fr;
-	  }
+  .roster-actions,
+  .replay-layout,
+  .briefing-settings-grid {
+    grid-template-columns: 1fr;
+  }
 
   .workflow-nav,
   .kpi-row,
   .calibrated-metrics,
-	  .audit-summary-grid,
-	  .deployment-bucket-grid,
-	  .counterfactual-grid,
-	  .profile-board,
+  .audit-summary-grid,
+  .counterfactual-grid,
+  .profile-board,
   .briefing-preview-kpis,
   .briefing-preview-sections {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2126,10 +1962,9 @@ select {
   .counterfactual-grid,
   .evidence-grid,
   .recap-briefing,
-	  .profile-board,
-	  .matrix-grid,
-	  .deployment-bucket-grid,
-	  .table-head,
+  .profile-board,
+  .matrix-grid,
+  .table-head,
   .table-row,
   .compact-row,
   .pitch-controls,
