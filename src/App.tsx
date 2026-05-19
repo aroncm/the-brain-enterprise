@@ -1251,6 +1251,33 @@ function groupSeasonAuditWindowsByGame(windows: PitchingAuditWindow[]): SeasonAu
     .sort((a, b) => auditPriorityValue(b.row) - auditPriorityValue(a.row));
 }
 
+function groupSeasonAuditWindowsByBucketGame(
+  windows: PitchingAuditWindow[],
+  bucket: MatrixCell | "all" = "all",
+): SeasonAuditGameOpportunity[] {
+  const filtered =
+    bucket === "all" ? uniqueAuditWindows(windows) : uniqueAuditWindows(windows).filter((window) => matrixCellForWindow(window) === bucket);
+  return groupSeasonAuditWindowsByGame(filtered);
+}
+
+function auditBucketGameCounts(windows: PitchingAuditWindow[]): Record<MatrixCell, number> {
+  const grouped = new Map<MatrixCell, Set<string>>([
+    ["standard", new Set<string>()],
+    ["tandem", new Set<string>()],
+    ["push", new Set<string>()],
+    ["workload", new Set<string>()],
+  ]);
+  for (const window of uniqueAuditWindows(windows)) {
+    grouped.get(matrixCellForWindow(window))?.add(auditGameKey(window));
+  }
+  return {
+    standard: grouped.get("standard")?.size ?? 0,
+    tandem: grouped.get("tandem")?.size ?? 0,
+    push: grouped.get("push")?.size ?? 0,
+    workload: grouped.get("workload")?.size ?? 0,
+  };
+}
+
 function SeasonAuditOpportunityRow({
   opportunity,
   onOpenGameAudit,
@@ -1329,17 +1356,20 @@ function CommandCenter({
   const deploymentBuckets: MatrixCell[] = ["tandem", "push", "workload", "standard"];
   const [allocationFilter, setAllocationFilter] = useState<MatrixCell | "all">("all");
   const allCalibratedGames = groupCalibratedOpportunitiesByGame(calibratedRows);
-  const allSeasonAuditGames = groupSeasonAuditWindowsByGame(windows);
+  const allSeasonAuditGames = groupSeasonAuditWindowsByBucketGame(windows);
   const bucketSourceGames = allSeasonAuditGames.length > 0 ? allSeasonAuditGames : allCalibratedGames;
-  const auditMatrix = bucketSourceGames.reduce(
-    (counts, opportunity) => {
-      counts[opportunity.cell] += 1;
-      return counts;
-    },
-    { standard: 0, tandem: 0, push: 0, workload: 0 },
-  );
+  const auditMatrix =
+    allSeasonAuditGames.length > 0
+      ? auditBucketGameCounts(windows)
+      : bucketSourceGames.reduce(
+          (counts, opportunity) => {
+            counts[opportunity.cell] += 1;
+            return counts;
+          },
+          { standard: 0, tandem: 0, push: 0, workload: 0 },
+        );
   const filteredSeasonAuditGames =
-    allocationFilter === "all" ? allSeasonAuditGames : allSeasonAuditGames.filter((opportunity) => opportunity.cell === allocationFilter);
+    allocationFilter === "all" ? allSeasonAuditGames : groupSeasonAuditWindowsByBucketGame(windows, allocationFilter);
   const filteredCalibratedGames =
     allocationFilter === "all" ? allCalibratedGames : allCalibratedGames.filter((opportunity) => opportunity.cell === allocationFilter);
   const selectedBucketCopy = allocationFilter === "all" ? null : matrixBucketCopy(allocationFilter);
@@ -1359,7 +1389,7 @@ function CommandCenter({
   const allocationMapDetail =
     nonEmptyBucketCount === 1
       ? "These counts are from the season audit inventory. If one bucket dominates, it means the current model is classifying this club's reviewed cases into one primary staff-allocation question."
-      : "These counts are calculated from the season audit inventory. Select a decision type to show the games in that bucket.";
+      : "These counts are calculated from the season audit inventory. Select a decision type to show the games with at least one audited window in that bucket.";
   const queuePitcherCount = new Set(
     [
       ...calibratedRows.map((row) => row.pitcherId || row.pitcherName),
@@ -1430,7 +1460,7 @@ function CommandCenter({
                 >
                   <strong>{bucketSourceGames.length}</strong>
                   <span>All review games</span>
-                  <p>Every game currently surfaced in the season staff-allocation audit.</p>
+                  <p>Every game currently surfaced in the season staff-allocation audit. A game can appear in more than one decision type.</p>
                 </button>
                 {deploymentBuckets.map((bucket) => {
                   const copy = matrixBucketCopy(bucket);
@@ -2550,7 +2580,7 @@ export default function App() {
         const [gamePayload, profilePayload, auditPayload] = await Promise.all([
           fetchEnterpriseGames({ league: "mlb", team: selectedTeam.abbr, limit: 300 }),
           fetchPitcherProfiles({ league: "mlb", team: selectedTeam.abbr, year: season, limit: 750 }),
-          fetchPitchingAuditSummary({ league: "mlb", team: selectedTeam.abbr, year: season, limit: 5000 }),
+          fetchPitchingAuditSummary({ league: "mlb", team: selectedTeam.abbr, year: season, limit: 1000 }),
         ]);
         if (cancelled) return;
         setGames(gamePayload.games);
