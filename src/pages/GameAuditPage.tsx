@@ -141,8 +141,11 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
     return () => { if (autoplayRef.current) clearInterval(autoplayRef.current); };
   }, [autoplay, replay]);
 
-  const entries = replay?.entries ?? [];
-  const statuses = useMemo(() => (replay ? monotonicStatuses(replay.entries) : []), [replay]);
+  const entries = useMemo(
+    () => (replay?.entries ?? []).filter((e) => e.snapshot.fielding_team === team.abbr),
+    [replay, team.abbr],
+  );
+  const statuses = useMemo(() => monotonicStatuses(entries), [entries]);
   const pitcherGroups = useMemo(() => groupByPitcher(entries), [entries]);
   const selected = entries[selectedIdx] ?? null;
   const prevEntry = selectedIdx > 0 ? entries[selectedIdx - 1] : null;
