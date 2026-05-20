@@ -1,12 +1,15 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import type { Team } from "../lib/constants";
 import { UNAVAILABLE } from "../lib/constants";
 import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
-import { GaugeBar } from "../components/GaugeBar";
 import { EmptyState } from "../components/EmptyState";
-import { TeamLogo } from "../components/TeamLogo";
 import { MetricCard } from "../components/MetricCard";
+import { StrikeZone } from "../components/StrikeZone";
+import { DecisionReadPanel } from "../components/DecisionReadPanel";
+import { ModelDetailPanel } from "../components/ModelDetailPanel";
+import { BullpenOutcomes } from "../components/BullpenOutcomes";
+import { DecisionOutcome } from "../components/DecisionOutcome";
 import {
   fetchEnterpriseGames,
   fetchPitchingReplay,
@@ -20,28 +23,73 @@ import type {
 } from "../types";
 import {
   pitchCount,
-  stuffScore,
-  velocityDrop,
   monotonicStatuses,
   signalClass,
   opportunityForPitch,
   preventableRunsForPitch,
-  scaledPercent,
   baseStateFlags,
 } from "../lib/helpers";
 import {
-  fmtNumber,
-  fmtSigned,
-  fmtPct,
   statusLabel,
   statusRank,
   halfInningLabel,
   baseStateLabel,
   outsLabel,
-  featureLabel,
-  clamp,
   formatDateText,
+  ordinal,
+  pitchName,
 } from "../lib/format";
+
+type PitcherGroup = {
+  pitcherId: string;
+  name: string;
+  role: string;
+  count: number;
+  startIdx: number;
+};
+
+function groupByPitcher(entries: PitchingReplayEntry[]): PitcherGroup[] {
+  const groups: PitcherGroup[] = [];
+  let current: PitcherGroup | null = null;
+  for (let i = 0; i < entries.length; i++) {
+    const pid = entries[i].snapshot.pitcher_id;
+    if (!current || current.pitcherId !== pid) {
+      const isFirst = groups.length === 0;
+      current = {
+        pitcherId: pid,
+        name: entries[i].snapshot.pitcher_name,
+        role: isFirst ? "Starter" : "Reliever",
+        count: 0,
+        startIdx: i,
+      };
+      groups.push(current);
+    }
+    current.count++;
+  }
+  return groups;
+}
+
+function buildEventNarrative(entry: PitchingReplayEntry, prevEntry: PitchingReplayEntry | null, displayStatus: string): string | null {
+  if (!prevEntry) return `${entry.snapshot.pitcher_name} at pitch ${pitchCount(entry)} in the ${halfInningLabel(entry.snapshot.half, entry.snapshot.inning).toLowerCase()}.`;
+
+  const prevStatus = statusLabel(prevEntry.recommendation.status);
+  const currStatus = displayStatus;
+  if (statusRank(currStatus) > statusRank(prevStatus)) {
+    return `Signal advanced to ${currStatus}. ${entry.snapshot.pitcher_name} at pitch ${pitchCount(entry)}.`;
+  }
+
+  if (entry.snapshot.inning !== prevEntry.snapshot.inning || entry.snapshot.half !== prevEntry.snapshot.half) {
+    return `New inning: ${halfInningLabel(entry.snapshot.half, entry.snapshot.inning)}. Pitch ${pitchCount(entry)}.`;
+  }
+
+  const prevScore = (prevEntry.snapshot.away_score ?? 0) + (prevEntry.snapshot.home_score ?? 0);
+  const currScore = (entry.snapshot.away_score ?? 0) + (entry.snapshot.home_score ?? 0);
+  if (currScore !== prevScore) {
+    return `Score changed: ${entry.snapshot.away_score ?? 0}-${entry.snapshot.home_score ?? 0}. Pitch ${pitchCount(entry)}.`;
+  }
+
+  return null;
+}
 
 export function GameAuditPage({ team, initialGameId }: { team: Team; initialGameId?: string }) {
   const [games, setGames] = useState<EnterpriseGameSummary[]>([]);
@@ -51,6 +99,8 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [gamesLoading, setGamesLoading] = useState(true);
+  const [autoplay, setAutoplay] = useState(false);
+  const autoplayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     setGamesLoading(true);
@@ -61,11 +111,9 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
   }, [team.abbr]);
 
   useEffect(() => {
-    if (!selectedGameId) {
-      setReplay(null);
-      return;
-    }
+    if (!selectedGameId) { setReplay(null); return; }
     setLoading(true);
+    setAutoplay(false);
     Promise.all([
       fetchPitchingReplay(selectedGameId).catch(() => null),
       fetchPreventableRunsOpportunities({ gameId: selectedGameId }).then((p) => p.rows).catch(() => []),
@@ -77,15 +125,42 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
     });
   }, [selectedGameId]);
 
-  const statuses = useMemo(() => (replay ? monotonicStatuses(replay.entries) : []), [replay]);
+  // Autoplay logic
+  useEffect(() => {
+    if (autoplay && replay) {
+      autoplayRef.current = setInterval(() => {
+        setSelectedIdx((prev) => {
+          if (prev >= replay.entries.length - 1) {
+            setAutoplay(false);
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1200);
+    }
+    return () => { if (autoplayRef.current) clearInterval(autoplayRef.current); };
+  }, [autoplay, replay]);
+
   const entries = replay?.entries ?? [];
+  const statuses = useMemo(() => (replay ? monotonicStatuses(replay.entries) : []), [replay]);
+  const pitcherGroups = useMemo(() => groupByPitcher(entries), [entries]);
   const selected = entries[selectedIdx] ?? null;
+  const prevEntry = selectedIdx > 0 ? entries[selectedIdx - 1] : null;
   const displayStatus = statuses[selectedIdx] ?? "STAY";
   const opportunity = useMemo(
     () => opportunityForPitch(selected, opportunities, selectedGameId),
     [selected, opportunities, selectedGameId],
   );
   const preventable = preventableRunsForPitch(selected, opportunity);
+
+  const starterPitcherId = entries[0]?.snapshot.pitcher_id ?? "";
+
+  const jumpToPullNow = useCallback(() => {
+    const idx = entries.findIndex((e) => statusLabel(e.recommendation.status) === "PULL NOW");
+    if (idx >= 0) setSelectedIdx(idx);
+  }, [entries]);
+
+  const eventNarrative = selected ? buildEventNarrative(selected, prevEntry, displayStatus) : null;
 
   if (!selectedGameId && !gamesLoading && games.length === 0) {
     return (
@@ -122,14 +197,92 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
 
       {!loading && replay && entries.length > 0 && (
         <>
-          <section className="game-summary-strip">
-            <MetricCard eyebrow="PITCHES" value={String(entries.length)} label="Windows tracked" accent="navy" />
-            <MetricCard eyebrow="STAY" value={String(replay.summary.stay_count)} label="Hold calls" accent="green" />
-            <MetricCard eyebrow="WATCH" value={String(replay.summary.watch_count)} label="Watch signals" accent="gold" />
-            <MetricCard eyebrow="PREP/PULL" value={String(replay.summary.prep_count + replay.summary.pull_now_count)} label="Action signals" accent="red" />
+          {/* Status Banner */}
+          <section className="game-status-banner">
+            <h2 className={`game-status-banner__status game-status-banner__status--${signalClass(displayStatus)}`}>
+              {displayStatus}
+            </h2>
           </section>
 
-          <section className="game-timeline">
+          {/* Event narrative */}
+          {eventNarrative && (
+            <div className="event-narrative">
+              <span className="event-narrative__label">Current pitch window</span>
+              <span className="event-narrative__text">{eventNarrative}</span>
+            </div>
+          )}
+
+          {/* Main three-column layout */}
+          <section className="game-detail-expanded">
+            {/* Left: Situation */}
+            <div className="game-detail__situation-expanded">
+              <div className="situation-pitcher-card">
+                <div className="situation-pitcher-card__team">
+                  <img
+                    src={`https://www.mlbstatic.com/team-logos/${teamIdForAbbr(selected.snapshot.fielding_team)}.svg`}
+                    alt={selected.snapshot.fielding_team}
+                    width={40}
+                    height={40}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                </div>
+                <h3 className="situation-pitcher-card__name">{selected.snapshot.pitcher_name}</h3>
+                <Diamond baseState={selected.snapshot.base_state} outs={selected.snapshot.outs} />
+              </div>
+              <div className="situation-facts-table">
+                <SituationRow label="Situation" value={halfInningLabel(selected.snapshot.half, selected.snapshot.inning)} />
+                <SituationRow label="Bases" value={baseStateLabel(selected.snapshot.base_state)} />
+                <SituationRow label="Outs" value={outsLabel(selected.snapshot.outs)} />
+                <SituationRow label="Pitch count" value={String(pitchCount(selected))} />
+                <SituationRow label="Times through order" value={String(selected.snapshot.starter_state.times_through_order)} />
+                <SituationRow label="Score" value={`${selected.snapshot.away_score ?? "—"}-${selected.snapshot.home_score ?? "—"}`} />
+                {selected.snapshot.starter_state.batters_faced_in_game != null && (
+                  <SituationRow label="Batters faced" value={String(selected.snapshot.starter_state.batters_faced_in_game)} />
+                )}
+              </div>
+            </div>
+
+            {/* Center: Strike Zone */}
+            <div className="game-detail__zone">
+              <StrikeZone
+                px={selected.snapshot.px}
+                pz={selected.snapshot.pz}
+                pitchType={selected.snapshot.pitch_type}
+                releaseSpeed={selected.snapshot.release_speed}
+                pitchNumber={pitchCount(selected)}
+                status={displayStatus}
+              />
+            </div>
+
+            {/* Right: Decision Read */}
+            <div className="game-detail__decision">
+              <DecisionReadPanel
+                entry={selected}
+                displayStatus={displayStatus}
+                preventableRuns={preventable}
+              />
+            </div>
+          </section>
+
+          {/* Pitcher Tabs */}
+          <section className="pitcher-tabs">
+            {pitcherGroups.map((pg) => {
+              const isActive = selectedIdx >= pg.startIdx && selectedIdx < pg.startIdx + pg.count;
+              return (
+                <button
+                  key={pg.pitcherId}
+                  className={`pitcher-tab ${isActive ? "pitcher-tab--active" : ""}`}
+                  onClick={() => setSelectedIdx(pg.startIdx)}
+                >
+                  <span className="pitcher-tab__name">{pg.name} · {pg.role}</span>
+                  <span className="pitcher-tab__count">{pg.count} pitches</span>
+                </button>
+              );
+            })}
+          </section>
+
+          {/* Timeline */}
+          <section className="game-timeline-expanded">
             <div className="timeline-strip">
               {entries.map((entry, idx) => {
                 const st = statuses[idx];
@@ -143,110 +296,58 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
                 );
               })}
             </div>
-            <div className="timeline-labels">
-              <span>Pitch 1</span>
-              <span>Pitch {pitchCount(entries[entries.length - 1])}</span>
-            </div>
+            {/* Scrubber */}
+            <input
+              type="range"
+              className="timeline-scrubber"
+              min={0}
+              max={entries.length - 1}
+              value={selectedIdx}
+              onChange={(e) => setSelectedIdx(Number(e.target.value))}
+            />
           </section>
 
-          {selected && (
-            <section className="game-detail">
-              <div className="game-detail__situation">
-                <h3>Situation</h3>
-                <div className="situation-facts">
-                  <span className="situation-pitcher">{selected.snapshot.pitcher_name}</span>
-                  <span>{halfInningLabel(selected.snapshot.half, selected.snapshot.inning)}</span>
-                  <span>{outsLabel(selected.snapshot.outs)}</span>
-                  <span>{baseStateLabel(selected.snapshot.base_state)}</span>
-                  <span>Pitch #{pitchCount(selected)}</span>
-                  <span>
-                    {selected.snapshot.away_score ?? "—"}-{selected.snapshot.home_score ?? "—"}
-                  </span>
-                </div>
-                <Diamond baseState={selected.snapshot.base_state} />
-              </div>
+          {/* Navigation controls */}
+          <section className="game-nav-controls">
+            <button
+              className="nav-ctrl-btn"
+              onClick={() => setSelectedIdx((p) => Math.max(0, p - 1))}
+              disabled={selectedIdx <= 0}
+            >
+              PREVIOUS
+            </button>
+            <button
+              className={`nav-ctrl-btn nav-ctrl-btn--autoplay ${autoplay ? "nav-ctrl-btn--active" : ""}`}
+              onClick={() => setAutoplay((a) => !a)}
+            >
+              {autoplay ? "PAUSE" : "AUTOPLAY"}
+            </button>
+            <button
+              className="nav-ctrl-btn"
+              onClick={() => setSelectedIdx((p) => Math.min(entries.length - 1, p + 1))}
+              disabled={selectedIdx >= entries.length - 1}
+            >
+              NEXT
+            </button>
+            <button className="nav-ctrl-btn nav-ctrl-btn--jump" onClick={jumpToPullNow}>
+              JUMP TO PULL NOW
+            </button>
+          </section>
 
-              <div className="game-detail__model">
-                <h3>Model Reading</h3>
-                <div className="model-status-row">
-                  <StatusBadge status={displayStatus} />
-                  <span className="model-confidence">
-                    {fmtPct(selected.recommendation.confidence)} confidence
-                  </span>
-                </div>
-                <div className="model-gauges">
-                  <GaugeBar
-                    label="Stuff Grade"
-                    value={`${stuffScore(selected)}/100`}
-                    percent={stuffScore(selected) / 100}
-                    tone={stuffScore(selected) >= 65 ? "good" : stuffScore(selected) >= 45 ? "warn" : "bad"}
-                  />
-                  <GaugeBar
-                    label="Velocity Drop"
-                    value={velocityDrop(selected) != null ? `${fmtSigned(velocityDrop(selected), 1)} mph` : UNAVAILABLE}
-                    percent={velocityDrop(selected) != null ? clamp(Math.abs(velocityDrop(selected)!) / 4) : 0}
-                    tone={velocityDrop(selected) != null && velocityDrop(selected)! < -1.5 ? "bad" : "neutral"}
-                  />
-                  <GaugeBar
-                    label="Degradation"
-                    value={fmtNumber(selected.snapshot.starter_state.degradation_score, 2)}
-                    percent={scaledPercent(selected.snapshot.starter_state.degradation_score, 4)}
-                    tone={
-                      (selected.snapshot.starter_state.degradation_score ?? 0) > 2
-                        ? "bad"
-                        : (selected.snapshot.starter_state.degradation_score ?? 0) > 1
-                          ? "warn"
-                          : "good"
-                    }
-                  />
-                  <GaugeBar
-                    label="Leverage"
-                    value={fmtNumber(selected.snapshot.leverage_index, 2)}
-                    percent={scaledPercent(selected.snapshot.leverage_index, 4)}
-                    tone={
-                      (selected.snapshot.leverage_index ?? 0) > 2
-                        ? "gold"
-                        : "neutral"
-                    }
-                  />
-                </div>
-              </div>
+          {/* Model detail breakdown */}
+          {selected && <ModelDetailPanel entry={selected} />}
 
-              <div className="game-detail__recommendation">
-                <h3>Recommendation</h3>
-                {selected.recommendation.top_reason_codes.length > 0 && (
-                  <ul className="reason-list">
-                    {selected.recommendation.top_reason_codes.map((code, i) => (
-                      <li key={i}>{featureLabel(code)}</li>
-                    ))}
-                  </ul>
-                )}
-                {selected.top_candidates && selected.top_candidates.length > 0 && (
-                  <div className="reliever-alt">
-                    <span className="reliever-alt__label">Best alternative</span>
-                    <strong>{selected.top_candidates[0].player_name}</strong>
-                    <span className="reliever-alt__role">{selected.top_candidates[0].bullpen_role}</span>
-                    <span className="reliever-alt__score">
-                      Matchup: {fmtNumber(selected.top_candidates[0].direct_matchup_fit, 2)}
-                    </span>
-                  </div>
-                )}
-                {preventable != null && (
-                  <div className="preventable-callout">
-                    <span className="preventable-callout__label">Projected Preventable Runs</span>
-                    <strong className="preventable-callout__value">{fmtNumber(preventable, 3)}</strong>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
+          {/* Bullpen outcomes */}
+          <BullpenOutcomes entries={entries} starterPitcherId={starterPitcherId} />
+
+          {/* Decision outcome */}
+          <DecisionOutcome entries={entries} opportunity={opportunity} />
         </>
       )}
 
       {!loading && replay && entries.length === 0 && (
         <EmptyState title="No pitch data" detail="This game has no tracked pitch windows." />
       )}
-
       {!loading && !replay && selectedGameId && (
         <EmptyState title="Replay unavailable" detail="Could not load replay data for this game." />
       )}
@@ -254,15 +355,42 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
   );
 }
 
-function Diamond({ baseState }: { baseState: string | null | undefined }) {
+function SituationRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="situation-row">
+      <span className="situation-row__label">{label}</span>
+      <span className="situation-row__value">{value}</span>
+    </div>
+  );
+}
+
+function Diamond({ baseState, outs }: { baseState: string | null | undefined; outs: number }) {
   const flags = baseStateFlags(baseState);
   return (
-    <svg className="diamond-svg" viewBox="0 0 60 60" width={64} height={64}>
-      <polygon points="30,8 52,30 30,52 8,30" fill="none" stroke="var(--navy)" strokeWidth="1.5" opacity="0.3" />
-      <circle cx="30" cy="52" r="4" fill="var(--navy)" opacity="0.6" />
-      <circle cx="52" cy="30" r="4" fill={flags.first ? "var(--gold)" : "var(--paper-2)"} stroke="var(--navy)" strokeWidth="1" />
-      <circle cx="30" cy="8" r="4" fill={flags.second ? "var(--gold)" : "var(--paper-2)"} stroke="var(--navy)" strokeWidth="1" />
-      <circle cx="8" cy="30" r="4" fill={flags.third ? "var(--gold)" : "var(--paper-2)"} stroke="var(--navy)" strokeWidth="1" />
-    </svg>
+    <div className="diamond-with-outs">
+      <svg viewBox="0 0 60 60" width={56} height={56}>
+        <polygon points="30,8 52,30 30,52 8,30" fill="none" stroke="var(--navy)" strokeWidth="1.5" opacity="0.25" />
+        <circle cx="30" cy="52" r="4" fill="var(--navy)" opacity="0.5" />
+        <circle cx="52" cy="30" r="4" fill={flags.first ? "var(--gold)" : "var(--paper-2)"} stroke="var(--navy)" strokeWidth="1" />
+        <circle cx="30" cy="8" r="4" fill={flags.second ? "var(--gold)" : "var(--paper-2)"} stroke="var(--navy)" strokeWidth="1" />
+        <circle cx="8" cy="30" r="4" fill={flags.third ? "var(--gold)" : "var(--paper-2)"} stroke="var(--navy)" strokeWidth="1" />
+      </svg>
+      <div className="diamond-outs">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className={`diamond-out-dot ${i < outs ? "diamond-out-dot--filled" : ""}`} />
+        ))}
+      </div>
+    </div>
   );
+}
+
+function teamIdForAbbr(abbr: string): number {
+  const ids: Record<string, number> = {
+    ARI: 109, AZ: 109, ATL: 144, BAL: 110, BOS: 111, CHC: 112, CWS: 145,
+    CIN: 113, CLE: 114, COL: 115, DET: 116, HOU: 117, KC: 118, LAA: 108,
+    LAD: 119, MIA: 146, MIL: 158, MIN: 142, NYM: 121, NYY: 147, OAK: 133,
+    PHI: 143, PIT: 134, SD: 135, SEA: 136, SF: 137, STL: 138, TB: 139,
+    TEX: 140, TOR: 141, WSH: 120,
+  };
+  return ids[abbr] ?? 0;
 }
