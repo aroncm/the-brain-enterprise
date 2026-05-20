@@ -141,8 +141,13 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
     return () => { if (autoplayRef.current) clearInterval(autoplayRef.current); };
   }, [autoplay, replay]);
 
-  const entries = replay?.entries ?? [];
-  const statuses = useMemo(() => (replay ? monotonicStatuses(replay.entries) : []), [replay]);
+  const allEntries = replay?.entries ?? [];
+  // Filter to only show pitches from the selected team's pitchers
+  const entries = useMemo(
+    () => allEntries.filter((e) => e.snapshot.fielding_team === team.abbr),
+    [allEntries, team.abbr],
+  );
+  const statuses = useMemo(() => monotonicStatuses(entries), [entries]);
   const pitcherGroups = useMemo(() => groupByPitcher(entries), [entries]);
   const selected = entries[selectedIdx] ?? null;
   const prevEntry = selectedIdx > 0 ? entries[selectedIdx - 1] : null;
@@ -154,6 +159,10 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
   const preventable = preventableRunsForPitch(selected, opportunity);
 
   const starterPitcherId = entries[0]?.snapshot.pitcher_id ?? "";
+
+  // Determine if selected team is home or away for score display
+  const isHome = replay ? replay.game.home_team === team.abbr : true;
+  const opponent = replay ? (isHome ? replay.game.away_team : replay.game.home_team) : "";
 
   const jumpToPullNow = useCallback(() => {
     const idx = entries.findIndex((e) => statusLabel(e.recommendation.status) === "PULL NOW");
@@ -175,8 +184,8 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
     <div className="game-page">
       <PageHeader
         eyebrow="GAME AUDIT"
-        title={replay ? `${replay.game.away_team} @ ${replay.game.home_team}` : team.name}
-        subtitle={replay ? formatDateText(replay.game.date) : "Select a game to review"}
+        title={replay ? `${team.abbr} vs ${opponent}` : team.name}
+        subtitle={replay ? `${isHome ? "Home" : "Away"} · ${formatDateText(replay.game.date)}` : "Select a game to review"}
         actions={
           <select
             className="game-selector"
@@ -184,11 +193,15 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
             onChange={(e) => setSelectedGameId(e.target.value)}
           >
             <option value="">Select game...</option>
-            {games.map((g) => (
-              <option key={g.game_id} value={g.game_id}>
-                {g.away_team} @ {g.home_team} — {g.date}
-              </option>
-            ))}
+            {games.map((g) => {
+              const opp = g.home_team === team.abbr ? g.away_team : g.home_team;
+              const loc = g.home_team === team.abbr ? "vs" : "@";
+              return (
+                <option key={g.game_id} value={g.game_id}>
+                  {team.abbr} {loc} {opp} — {g.date}
+                </option>
+              );
+            })}
           </select>
         }
       />
@@ -235,7 +248,7 @@ export function GameAuditPage({ team, initialGameId }: { team: Team; initialGame
                 <SituationRow label="Outs" value={outsLabel(selected.snapshot.outs)} />
                 <SituationRow label="Pitch count" value={String(pitchCount(selected))} />
                 <SituationRow label="Times through order" value={String(selected.snapshot.starter_state.times_through_order)} />
-                <SituationRow label="Score" value={`${selected.snapshot.away_score ?? "—"}-${selected.snapshot.home_score ?? "—"}`} />
+                <SituationRow label="Score" value={scoreFromPerspective(selected, isHome, team.abbr, opponent)} />
                 {selected.snapshot.starter_state.batters_faced_in_game != null && (
                   <SituationRow label="Batters faced" value={String(selected.snapshot.starter_state.batters_faced_in_game)} />
                 )}
@@ -382,6 +395,14 @@ function Diamond({ baseState, outs }: { baseState: string | null | undefined; ou
       </div>
     </div>
   );
+}
+
+function scoreFromPerspective(entry: PitchingReplayEntry, isHome: boolean, teamAbbr: string, opponent: string): string {
+  const homeScore = entry.snapshot.home_score ?? 0;
+  const awayScore = entry.snapshot.away_score ?? 0;
+  const teamScore = isHome ? homeScore : awayScore;
+  const oppScore = isHome ? awayScore : homeScore;
+  return `${teamAbbr} ${teamScore} - ${oppScore} ${opponent}`;
 }
 
 function teamIdForAbbr(abbr: string): number {
